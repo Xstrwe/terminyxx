@@ -3,8 +3,6 @@ package store
 import (
 	"errors"
 	"sync"
-
-	"github.com/zalando/go-keyring"
 )
 
 // Secrets stores passwords outside the database: Windows Credential
@@ -20,27 +18,10 @@ var ErrSecretNotFound = errors.New("secret not found")
 
 const keyringService = "terminyxx"
 
-type osKeyring struct{}
-
-func NewOSKeyring() Secrets { return osKeyring{} }
-
-func (osKeyring) Get(key string) (string, error) {
-	v, err := keyring.Get(keyringService, key)
-	if errors.Is(err, keyring.ErrNotFound) {
-		return "", ErrSecretNotFound
-	}
-	return v, err
-}
-
-func (osKeyring) Set(key, value string) error { return keyring.Set(keyringService, key, value) }
-
-func (osKeyring) Delete(key string) error {
-	err := keyring.Delete(keyringService, key)
-	if errors.Is(err, keyring.ErrNotFound) {
-		return nil
-	}
-	return err
-}
+// NewOSKeyring returns the platform secret store. On macOS it talks to the
+// Keychain directly (secrets_darwin.go); elsewhere it uses go-keyring
+// (secrets_keyring.go).
+func NewOSKeyring() Secrets { return newOSKeyring() }
 
 // MemorySecrets is an in-memory Secrets for tests.
 type MemorySecrets struct {

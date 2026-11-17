@@ -5,6 +5,7 @@ go 1.25.0
 require (
 	github.com/gorilla/websocket v1.5.3
 	github.com/kayrus/putty v1.0.5
+	github.com/keybase/go-keychain v0.0.1
 	github.com/pkg/sftp v1.13.10
 	github.com/wailsapp/wails/v2 v2.13.0
 	github.com/zalando/go-keyring v0.2.6
