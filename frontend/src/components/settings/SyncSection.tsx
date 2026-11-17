@@ -38,6 +38,12 @@ export function SyncSection() {
       if (r.hosts + r.folders + r.snippets === 0) return;
       window.dispatchEvent(new Event(LIBRARY_CHANGED));
       dialogs.toast(`Merged ${r.hosts} hosts, ${r.folders} folders and ${r.snippets} snippets.`, 'success');
+      if (r.replaced?.length) {
+        dialogs.toast(`Updated the address of existing hosts: ${r.replaced.join(', ')}. Check them before connecting.`, 'error');
+      }
+      if (r.flagsReset > 0) {
+        dialogs.toast(`Agent forwarding and tunnel auto-start from the file were turned off on ${r.flagsReset} hosts. Turn them on again in the host settings if you trust them.`);
+      }
       if (r.passwordsNotSaved > 0) {
         dialogs.toast(`${r.passwordsNotSaved} saved passwords were not imported: the OS keychain is unavailable.`, 'error');
       }

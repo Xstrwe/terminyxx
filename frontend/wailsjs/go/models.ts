@@ -706,6 +706,8 @@ export namespace store {
 	    hosts: number;
 	    snippets: number;
 	    passwordsNotSaved: number;
+	    replaced: string[];
+	    flagsReset: number;
 	
 	    static createFrom(source: any = {}) {
 	        return new ImportResult(source);
@@ -717,6 +719,8 @@ export namespace store {
 	        this.hosts = source["hosts"];
 	        this.snippets = source["snippets"];
 	        this.passwordsNotSaved = source["passwordsNotSaved"];
+	        this.replaced = source["replaced"];
+	        this.flagsReset = source["flagsReset"];
 	    }
 	}
 	export class Tunnel {

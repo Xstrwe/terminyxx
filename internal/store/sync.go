@@ -28,6 +28,12 @@ type ImportResult struct {
 	// PasswordsNotSaved counts hosts imported without their password
 	// because the OS keychain was unavailable.
 	PasswordsNotSaved int `json:"passwordsNotSaved"`
+	// Replaced lists existing hosts whose address, user or jump host the
+	// import changed, so the UI can tell the user.
+	Replaced []string `json:"replaced"`
+	// FlagsReset counts hosts on which agent forwarding or tunnel auto-start
+	// from the file was turned off; the user has to turn them on again here.
+	FlagsReset int `json:"flagsReset"`
 }
 
 // ExportBundle collects the data to sync. Saved passwords are included only
@@ -115,6 +121,16 @@ func (s *Store) ImportBundle(b Bundle) (ImportResult, error) {
 		if p.FolderID != "" && !s.folderExists(p.FolderID) {
 			p.FolderID = ""
 		}
+		var local *SSHProfile
+		if cur, err := s.GetSSHProfile(p.ID); err == nil {
+			local = &cur
+			if cur.Host != p.Host || cur.Port != p.Port || cur.Username != p.Username || cur.JumpProfileID != p.JumpProfileID {
+				res.Replaced = append(res.Replaced, cur.Name)
+			}
+		}
+		if resetRiskyFlags(&p, local) {
+			res.FlagsReset++
+		}
 		if err := s.SaveSSHProfile(p); errors.Is(err, ErrKeychainUnavailable) {
 			res.PasswordsNotSaved++
 		} else if err != nil {
@@ -125,6 +141,9 @@ func (s *Store) ImportBundle(b Bundle) (ImportResult, error) {
 	for _, p := range b.RDP {
 		if p.FolderID != "" && !s.folderExists(p.FolderID) {
 			p.FolderID = ""
+		}
+		if cur, err := s.GetRDPProfile(p.ID); err == nil && (cur.Host != p.Host || cur.Port != p.Port || cur.Username != p.Username) {
+			res.Replaced = append(res.Replaced, cur.Name)
 		}
 		if err := s.SaveRDPProfile(p); errors.Is(err, ErrKeychainUnavailable) {
 			res.PasswordsNotSaved++
@@ -140,4 +159,37 @@ func (s *Store) ImportBundle(b Bundle) (ImportResult, error) {
 		res.Snippets++
 	}
 	return res, nil
+}
+
+// resetRiskyFlags turns off settings from a sync file that act on their own
+// once the host is used: agent forwarding (lets the server use local keys)
+// and tunnels that start automatically. A setting the user already had on
+// for the same local host (and the same tunnel) is kept. It reports whether
+// anything was turned off.
+func resetRiskyFlags(p *SSHProfile, local *SSHProfile) bool {
+	changed := false
+	if p.AgentForwarding && (local == nil || !local.AgentForwarding) {
+		p.AgentForwarding = false
+		changed = true
+	}
+	for i := range p.Tunnels {
+		t := &p.Tunnels[i]
+		if !t.AutoStart {
+			continue
+		}
+		keep := false
+		if local != nil {
+			for _, lt := range local.Tunnels {
+				if lt == *t {
+					keep = true
+					break
+				}
+			}
+		}
+		if !keep {
+			t.AutoStart = false
+			changed = true
+		}
+	}
+	return changed
 }

@@ -61,3 +61,31 @@ func TestBundleRoundTrip(t *testing.T) {
 		t.Fatal("future version accepted")
 	}
 }
+
+func TestImportResetsRiskyFlagsAndReportsReplaced(t *testing.T) {
+	s, err := Open(filepath.Join(t.TempDir(), "t.db"), NewMemorySecrets())
+	must(t, err)
+	defer s.Close()
+	keep := Tunnel{ID: "t1", Kind: "local", BindPort: 8080, DestHost: "db", DestPort: 5432, AutoStart: true}
+	must(t, s.SaveSSHProfile(SSHProfile{ID: "a", Name: "a", Host: "old", Port: 22, Username: "u", AgentForwarding: true, Tunnels: []Tunnel{keep}}))
+
+	res, err := s.ImportBundle(Bundle{Version: BundleVersion, SSH: []SSHProfile{
+		// Existing host: address changed, its own agent forwarding and tunnel kept,
+		// a new auto-start tunnel turned off.
+		{ID: "a", Name: "a", Host: "evil", Port: 22, Username: "u", AgentForwarding: true,
+			Tunnels: []Tunnel{keep, {ID: "t2", Kind: "dynamic", BindPort: 1080, AutoStart: true}}},
+		// New host: agent forwarding turned off.
+		{ID: "b", Name: "b", Host: "h", Port: 22, Username: "u", AgentForwarding: true},
+	}})
+	must(t, err)
+	if len(res.Replaced) != 1 || res.Replaced[0] != "a" || res.FlagsReset != 2 {
+		t.Fatalf("result %+v", res)
+	}
+	a, _ := s.GetSSHProfile("a")
+	if !a.AgentForwarding || !a.Tunnels[0].AutoStart || a.Tunnels[1].AutoStart {
+		t.Fatalf("host a %+v", a)
+	}
+	if b, _ := s.GetSSHProfile("b"); b.AgentForwarding {
+		t.Fatal("agent forwarding imported for a new host")
+	}
+}
