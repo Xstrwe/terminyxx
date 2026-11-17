@@ -180,6 +180,7 @@ func (m *ConnectionManager) sftp(id string) (*SFTPBridge, error) {
 }
 
 func (m *ConnectionManager) StartShell(id string, cols, rows int) error {
+	cols, rows = clampTermSize(cols, rows)
 	if st := m.stream(id); st != nil {
 		st.resize(cols, rows)
 		st.start()
@@ -207,6 +208,7 @@ func (m *ConnectionManager) WriteInput(id, data string) error {
 }
 
 func (m *ConnectionManager) ResizePTY(id string, cols, rows int) error {
+	cols, rows = clampTermSize(cols, rows)
 	if st := m.stream(id); st != nil {
 		st.resize(cols, rows)
 		return nil

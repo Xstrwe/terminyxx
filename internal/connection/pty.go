@@ -33,6 +33,7 @@ type PTYSession struct {
 // NewPTYSession opens an interactive shell. Output is emitted as
 // terminal:output:{connID}; onExit runs once the shell has ended.
 func NewPTYSession(client *ssh.Client, emitter EventEmitter, connID string, cols, rows int, opts ptyOptions, onExit func()) (*PTYSession, error) {
+	cols, rows = clampTermSize(cols, rows)
 	if cols <= 0 {
 		cols = 120
 	}
@@ -174,6 +175,10 @@ func (p *PTYSession) Resize(cols, rows int) error {
 	defer p.mu.Unlock()
 	if p.closed {
 		return io.ErrClosedPipe
+	}
+	cols, rows = clampTermSize(cols, rows)
+	if cols == 0 || rows == 0 {
+		return nil
 	}
 	return p.session.WindowChange(rows, cols)
 }

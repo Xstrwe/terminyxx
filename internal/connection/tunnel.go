@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log"
 	"net"
 	"strconv"
 	"sync"
@@ -40,6 +41,20 @@ type TunnelInfo struct {
 	Active int64 `json:"active"`
 	// Total counts every connection accepted so far.
 	Total int64 `json:"total"`
+}
+
+// maxTunnelConns caps the connections one tunnel forwards at a time, so a
+// flood of local clients cannot exhaust file descriptors or SSH channels.
+const maxTunnelConns = 256
+
+// isLoopbackBind reports whether host only accepts connections from this
+// computer.
+func isLoopbackBind(host string) bool {
+	if host == "localhost" {
+		return true
+	}
+	ip := net.ParseIP(host)
+	return ip != nil && ip.IsLoopback()
 }
 
 type tunnel struct {
@@ -110,6 +125,11 @@ func (c *ManagedConnection) StartTunnel(spec TunnelSpec) (TunnelInfo, error) {
 		return TunnelInfo{}, fmt.Errorf("tunnel %s is already running", spec.ID)
 	}
 
+	if spec.Kind != TunnelRemote && !isLoopbackBind(spec.BindHost) {
+		// Anyone on the network can use this forward (for a SOCKS proxy:
+		// reach anything the server can, without authentication).
+		log.Printf("tunnel %s: listening on non-loopback address %s, reachable from other computers", spec.ID, spec.BindHost)
+	}
 	bind := net.JoinHostPort(spec.BindHost, strconv.Itoa(spec.BindPort))
 	var ln net.Listener
 	var err error
@@ -135,10 +155,17 @@ func (t *tunnel) serve(ctx context.Context, client *ssh.Client) {
 			return // listener closed
 		}
 		t.total.Add(1)
+		if t.active.Load() >= maxTunnelConns {
+			_ = conn.Close()
+			continue
+		}
+		t.active.Add(1)
 		go func() {
-			t.active.Add(1)
 			defer t.active.Add(-1)
 			defer conn.Close()
+			// Stopping the tunnel closes its open connections too.
+			stop := context.AfterFunc(ctx, func() { _ = conn.Close() })
+			defer stop()
 			switch t.spec.Kind {
 			case TunnelLocal:
 				t.pipeTo(ctx, conn, func() (net.Conn, error) {
@@ -149,7 +176,7 @@ func (t *tunnel) serve(ctx context.Context, client *ssh.Client) {
 					return net.DialTimeout("tcp", net.JoinHostPort(t.spec.DestHost, strconv.Itoa(t.spec.DestPort)), dialTimeout)
 				})
 			case TunnelDynamic:
-				serveSOCKS5(conn, client)
+				serveSOCKS5(ctx, conn, client)
 			}
 		}()
 	}
@@ -231,7 +258,7 @@ func (c *ManagedConnection) closeTunnels() {
 }
 
 // serveSOCKS5 implements the no-auth CONNECT subset of SOCKS5 (RFC 1928).
-func serveSOCKS5(conn net.Conn, client *ssh.Client) {
+func serveSOCKS5(ctx context.Context, conn net.Conn, client *ssh.Client) {
 	_ = conn.SetDeadline(time.Now().Add(15 * time.Second))
 	head := make([]byte, 2)
 	if _, err := io.ReadFull(conn, head); err != nil || head[0] != 5 {
@@ -305,7 +332,7 @@ func serveSOCKS5(conn net.Conn, client *ssh.Client) {
 	defer dst.Close()
 	socksReply(conn, 0)
 	_ = conn.SetDeadline(time.Time{})
-	pipe(context.Background(), conn, dst)
+	pipe(ctx, conn, dst)
 }
 
 func socksReply(conn net.Conn, code byte) {

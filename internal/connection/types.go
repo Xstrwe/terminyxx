@@ -8,6 +8,19 @@ const (
 	StateConnected
 )
 
+// maxTermCols / maxTermRows bound the window size sent to a server: the
+// values come from the frontend and are encoded as 16/32-bit integers.
+const (
+	maxTermCols = 4096
+	maxTermRows = 2048
+)
+
+// clampTermSize keeps a terminal size within 1..max (0 or less stays 0 so
+// callers can apply their defaults).
+func clampTermSize(cols, rows int) (int, int) {
+	return min(max(cols, 0), maxTermCols), min(max(rows, 0), maxTermRows)
+}
+
 type ConnectRequest struct {
 	ID       string `json:"id"`
 	Host     string `json:"host"`

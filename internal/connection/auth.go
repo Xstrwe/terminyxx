@@ -5,8 +5,10 @@ import (
 	"crypto/ed25519"
 	"errors"
 	"fmt"
+	"log"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 
 	"github.com/kayrus/putty"
@@ -41,7 +43,42 @@ func defaultKeyPaths() []string {
 	return paths
 }
 
+// keyboardInteractivePassword answers keyboard-interactive prompts with the
+// saved password, but only prompts that ask for a password without echo.
+// Any other question (an OTP code, "type yes to continue"…) makes the method
+// fail instead of sending the password where it was not asked for.
+func keyboardInteractivePassword(password string) ssh.KeyboardInteractiveChallenge {
+	return func(_, _ string, questions []string, echos []bool) ([]string, error) {
+		answers := make([]string, len(questions))
+		for i, q := range questions {
+			echo := i < len(echos) && echos[i]
+			if echo || !looksLikePasswordPrompt(q) || password == "" {
+				return nil, fmt.Errorf("server asked %q, which Terminyxx cannot answer automatically", strings.TrimSpace(q))
+			}
+			answers[i] = password
+		}
+		return answers, nil
+	}
+}
+
+func looksLikePasswordPrompt(q string) bool {
+	q = strings.ToLower(q)
+	return strings.Contains(q, "password") || strings.Contains(q, "passphrase") || strings.Contains(q, "пароль")
+}
+
+// warnKeyPermissions logs (like OpenSSH, but without refusing the key) when
+// a private key file can be read by other users.
+func warnKeyPermissions(path string) {
+	if runtime.GOOS == "windows" {
+		return
+	}
+	if fi, err := os.Stat(path); err == nil && fi.Mode().Perm()&0o077 != 0 {
+		log.Printf("warning: private key %s is accessible by others (mode %04o); run chmod 600 on it", path, fi.Mode().Perm())
+	}
+}
+
 func loadSigner(path, passphrase string) (ssh.Signer, error) {
+	warnKeyPermissions(path)
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return nil, fmt.Errorf("read key %s: %w", path, err)
@@ -119,13 +156,7 @@ func buildAuthMethods(req ConnectRequest) ([]ssh.AuthMethod, func(), error) {
 		auths = append(auths,
 			ssh.Password(password),
 			// Many servers only allow keyboard-interactive for passwords.
-			ssh.KeyboardInteractive(func(_, _ string, questions []string, _ []bool) ([]string, error) {
-				answers := make([]string, len(questions))
-				for i := range answers {
-					answers[i] = password
-				}
-				return answers, nil
-			}),
+			ssh.KeyboardInteractive(keyboardInteractivePassword(password)),
 		)
 	}
 	return auths, cleanup, nil

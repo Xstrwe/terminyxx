@@ -2,6 +2,7 @@ package connection
 
 import (
 	"bytes"
+	"context"
 	"errors"
 	"fmt"
 	"io"
@@ -58,17 +59,35 @@ func toEntry(name, fullPath string, info os.FileInfo) FileEntry {
 	}
 }
 
+// Limits for listing a remote folder: the server decides how many entries
+// it sends, so stop reading after listDirTimeout, show at most maxDirEntries
+// and resolve at most maxSymlinkStats symlinks (one round trip each).
+const (
+	listDirTimeout  = 30 * time.Second
+	maxDirEntries   = 100_000
+	maxSymlinkStats = 2_000
+)
+
 func (b *SFTPBridge) ListDir(dirPath string) ([]FileEntry, error) {
-	infos, err := b.client.ReadDir(dirPath)
-	if err != nil {
+	ctx, cancel := context.WithTimeout(context.Background(), listDirTimeout)
+	defer cancel()
+	infos, err := b.client.ReadDirContext(ctx, dirPath)
+	if err != nil && !(errors.Is(err, context.DeadlineExceeded) && len(infos) > 0) {
 		return nil, err
 	}
+	if len(infos) > maxDirEntries {
+		infos = infos[:maxDirEntries]
+	}
 	result := make([]FileEntry, 0, len(infos))
+	stats := 0
 	for _, info := range infos {
 		full := path.Join(dirPath, info.Name())
 		entry := toEntry(info.Name(), full, info)
 		if info.Mode()&os.ModeSymlink != 0 {
 			entry.IsLink = true
+		}
+		if entry.IsLink && stats < maxSymlinkStats {
+			stats++
 			if target, err := b.client.Stat(full); err == nil {
 				entry.IsDir = target.IsDir()
 				if !target.IsDir() {

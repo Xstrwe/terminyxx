@@ -9,6 +9,7 @@ import (
 	"os"
 	"path"
 	"path/filepath"
+	goruntime "runtime"
 	"strings"
 	"sync"
 	"time"
@@ -254,12 +255,81 @@ func downloadTarget(root, src, p string) (string, error) {
 	default:
 		return "", fmt.Errorf("server returned a path outside %s: %q", src, p)
 	}
+	if goruntime.GOOS == "windows" {
+		for _, part := range strings.Split(rel, "/") {
+			if unsafeWindowsName(part) {
+				return "", fmt.Errorf("refusing unsafe file name from server: %q", rel)
+			}
+		}
+	}
 	dst := filepath.Join(root, filepath.FromSlash(rel))
 	r, err := filepath.Rel(root, dst)
 	if err != nil || r == "." || r == ".." || strings.HasPrefix(r, ".."+string(filepath.Separator)) || filepath.IsAbs(r) {
 		return "", fmt.Errorf("refusing unsafe file name from server: %q", rel)
 	}
 	return dst, nil
+}
+
+// windowsReserved are device names Windows resolves in any folder
+// (with or without an extension): writing "NUL.txt" or "COM1" does not
+// create a file.
+var windowsReserved = map[string]bool{
+	"CON": true, "PRN": true, "AUX": true, "NUL": true, "CONIN$": true, "CONOUT$": true,
+	"COM1": true, "COM2": true, "COM3": true, "COM4": true, "COM5": true, "COM6": true, "COM7": true, "COM8": true, "COM9": true,
+	"LPT1": true, "LPT2": true, "LPT3": true, "LPT4": true, "LPT5": true, "LPT6": true, "LPT7": true, "LPT8": true, "LPT9": true,
+	"COM¹": true, "COM²": true, "COM³": true, "LPT¹": true, "LPT²": true, "LPT³": true,
+}
+
+// unsafeWindowsName reports whether a name from the server would be a
+// device, an alternate data stream ("file:stream") or be silently renamed
+// by Windows (trailing dot or space).
+func unsafeWindowsName(name string) bool {
+	if name == "" {
+		return false
+	}
+	if strings.ContainsAny(name, `:<>"|?*`) || strings.ContainsFunc(name, func(r rune) bool { return r < 32 }) {
+		return true
+	}
+	if strings.HasSuffix(name, ".") || strings.HasSuffix(name, " ") {
+		return name != "." && name != ".."
+	}
+	base := name
+	if i := strings.IndexByte(base, '.'); i >= 0 {
+		base = base[:i]
+	}
+	return windowsReserved[strings.ToUpper(strings.TrimRight(base, " "))]
+}
+
+// sensitiveFile reports whether a downloaded file looks like a key or
+// credential, which is then saved readable by the current user only.
+func sensitiveFile(remotePath string) bool {
+	p := strings.ToLower(remotePath)
+	if strings.Contains(p, "/.ssh/") || strings.Contains(p, "/.gnupg/") || strings.Contains(p, "/.aws/") {
+		return true
+	}
+	name := path.Base(p)
+	if strings.HasPrefix(name, "id_") && !strings.HasSuffix(name, ".pub") {
+		return true
+	}
+	for _, ext := range []string{".pem", ".key", ".ppk", ".p12", ".pfx", ".kdbx", ".env"} {
+		if strings.HasSuffix(name, ext) {
+			return true
+		}
+	}
+	return name == ".env" || name == ".netrc" || name == ".pgpass" || name == "credentials"
+}
+
+// downloadMode is the mode for a downloaded file: the remote permission
+// bits (no setuid/sticky), 0600 for keys and credentials, 0644 when the
+// server sent none. The process umask still applies on creation.
+func downloadMode(it transferItem) os.FileMode {
+	if sensitiveFile(it.src) {
+		return 0o600
+	}
+	if m := it.mode.Perm(); m != 0 {
+		return m | 0o600 // the user must be able to read and replace it
+	}
+	return 0o644
 }
 
 func (b *SFTPBridge) uploadFile(ctx context.Context, it transferItem, t *progressTracker) error {
@@ -301,9 +371,14 @@ func (b *SFTPBridge) downloadFile(ctx context.Context, it transferItem, t *progr
 	if err := os.MkdirAll(filepath.Dir(it.dst), 0o755); err != nil {
 		return err
 	}
-	dst, err := os.OpenFile(it.dst, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0o644)
+	mode := downloadMode(it)
+	dst, err := os.OpenFile(it.dst, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, mode)
 	if err != nil {
 		return err
+	}
+	if mode == 0o600 {
+		// An existing file keeps its old mode on O_TRUNC; tighten it.
+		_ = dst.Chmod(mode)
 	}
 	_, err = src.WriteTo(&countingWriter{ctx: ctx, w: dst, t: t})
 	if cerr := dst.Close(); err == nil {

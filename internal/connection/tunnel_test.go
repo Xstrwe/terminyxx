@@ -218,3 +218,45 @@ func TestRecordingCapturesOutput(t *testing.T) {
 		t.Fatal("still recording after stop")
 	}
 }
+
+func TestStopTunnelClosesOpenSOCKSConnections(t *testing.T) {
+	m, id := connected(t)
+	info, err := m.StartTunnel(id, TunnelSpec{ID: "d", Kind: TunnelDynamic})
+	if err != nil {
+		t.Fatal(err)
+	}
+	// A client that connects but never finishes the SOCKS handshake.
+	c, err := net.DialTimeout("tcp", info.ListenAddr, 3*time.Second)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer c.Close()
+	deadline := time.Now().Add(3 * time.Second)
+	for {
+		list, _ := m.ListTunnels(id)
+		if len(list) == 1 && list[0].Active == 1 {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("connection not accepted: %+v", list)
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	if err := m.StopTunnel(id, "d"); err != nil {
+		t.Fatal(err)
+	}
+	// The server side closes the connection right away instead of keeping
+	// it open after Stop.
+	c.SetReadDeadline(time.Now().Add(3 * time.Second))
+	if _, err := c.Read(make([]byte, 1)); err == nil || strings.Contains(err.Error(), "timeout") {
+		t.Fatalf("connection still open after Stop: %v", err)
+	}
+}
+
+func TestIsLoopbackBind(t *testing.T) {
+	for host, want := range map[string]bool{"127.0.0.1": true, "::1": true, "localhost": true, "0.0.0.0": false, "192.168.1.5": false, "": false} {
+		if got := isLoopbackBind(host); got != want {
+			t.Errorf("isLoopbackBind(%q) = %v", host, got)
+		}
+	}
+}

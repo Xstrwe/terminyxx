@@ -186,6 +186,7 @@ func (t *telnetConn) sendNAWSLocked() {
 
 // Resize tells the server the window size when it asked for it (NAWS).
 func (t *telnetConn) Resize(cols, rows int) {
+	cols, rows = clampTermSize(cols, rows)
 	if cols <= 0 || rows <= 0 {
 		return
 	}

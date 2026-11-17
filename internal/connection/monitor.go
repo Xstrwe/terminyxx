@@ -1,8 +1,10 @@
 package connection
 
 import (
+	"bytes"
 	"errors"
 	"fmt"
+	"io"
 	"strconv"
 	"strings"
 	"sync"
@@ -65,6 +67,27 @@ func (c *ManagedConnection) Stats() (HostStats, error) {
 	return c.monitor.parse(out, time.Now())
 }
 
+// maxExecOutput bounds what runExec keeps from a command's output.
+const maxExecOutput = 1 << 20
+
+// capWriter writes up to n bytes to w and silently drops the rest, so a
+// misbehaving server cannot make the client buffer unbounded output.
+type capWriter struct {
+	w io.Writer
+	n int
+}
+
+func (c *capWriter) Write(p []byte) (int, error) {
+	if c.n > 0 {
+		k := min(len(p), c.n)
+		if _, err := c.w.Write(p[:k]); err != nil {
+			return 0, err
+		}
+		c.n -= k
+	}
+	return len(p), nil
+}
+
 // runExec runs a command on a fresh session and returns its stdout.
 func runExec(client *ssh.Client, cmd string, timeout time.Duration) (string, error) {
 	session, err := client.NewSession()
@@ -77,8 +100,11 @@ func runExec(client *ssh.Client, cmd string, timeout time.Duration) (string, err
 	}
 	done := make(chan result, 1)
 	go func() {
-		out, err := session.Output(cmd)
-		done <- result{out, err}
+		var buf bytes.Buffer
+		// The output comes from the server: keep at most maxExecOutput bytes.
+		session.Stdout = &capWriter{w: &buf, n: maxExecOutput}
+		err := session.Run(cmd)
+		done <- result{buf.Bytes(), err}
 	}()
 	select {
 	case r := <-done:
