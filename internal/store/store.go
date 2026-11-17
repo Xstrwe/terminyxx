@@ -8,6 +8,7 @@ import (
 	"log"
 	"os"
 	"path/filepath"
+	"strings"
 
 	_ "modernc.org/sqlite"
 	"terminyxx/internal/rdp"
@@ -73,8 +74,13 @@ func New(secrets Secrets) (*Store, error) {
 	if err != nil {
 		return nil, err
 	}
-	if err := os.MkdirAll(appDir, 0o755); err != nil {
+	if err := os.MkdirAll(appDir, 0o700); err != nil {
 		return nil, err
+	}
+	// Older versions created the folder 0755; it holds the database,
+	// known_hosts and session recordings, so keep it private to the user.
+	if err := os.Chmod(appDir, 0o700); err != nil {
+		log.Printf("store: chmod %s: %v", appDir, err)
 	}
 	return Open(filepath.Join(appDir, "terminyxx.db"), secrets)
 }
@@ -106,8 +112,27 @@ func Open(path string, secrets Secrets) (*Store, error) {
 		return nil, err
 	}
 	s.moveLegacyPasswords()
+	restrictDBFiles(path)
 	return s, nil
 }
+
+// restrictDBFiles makes the database (and its journal files) readable by the
+// current user only. Older versions left them at the umask default (0644).
+func restrictDBFiles(path string) {
+	if path == "" || path == ":memory:" || strings.HasPrefix(path, "file:") {
+		return
+	}
+	for _, f := range []string{path, path + "-wal", path + "-shm", path + "-journal"} {
+		if err := os.Chmod(f, 0o600); err != nil && !errors.Is(err, os.ErrNotExist) {
+			log.Printf("store: chmod %s: %v", f, err)
+		}
+	}
+}
+
+// ErrKeychainUnavailable is returned when a password could not be stored in
+// the OS keychain. Passwords are never written to the database in plaintext:
+// the rest of the profile is saved and the password is left unchanged.
+var ErrKeychainUnavailable = errors.New("the OS keychain is unavailable, so the password was not saved (the rest of the host was saved)")
 
 func (s *Store) Close() error {
 	return s.db.Close()
@@ -327,11 +352,15 @@ func (s *Store) SaveSSHProfile(p SSHProfile) error {
 		return err
 	}
 
-	// The password goes to the keychain; the DB column is only a fallback.
-	dbPassword := ""
+	// The password goes to the keychain only. The DB column is legacy: it
+	// is still read for old databases but never written with a new password.
+	var pwErr error
 	if p.Password != "" {
-		if s.secrets == nil || s.secrets.Set(sshSecretKey(p.ID), p.Password) != nil {
-			dbPassword = p.Password
+		if s.secrets == nil {
+			pwErr = ErrKeychainUnavailable
+		} else if err := s.secrets.Set(sshSecretKey(p.ID), p.Password); err != nil {
+			log.Printf("store: keychain write failed: %v", err)
+			pwErr = ErrKeychainUnavailable
 		}
 	}
 
@@ -356,19 +385,26 @@ WHERE id=?`, p.Name, p.Host, p.Port, p.Username, p.AuthType, p.KeyPath, p.Folder
 			return err
 		}
 		switch {
-		case p.Password != "":
-			_, err = s.db.Exec(`UPDATE ssh_profiles SET password=? WHERE id=?`, dbPassword, p.ID)
+		case p.Password != "" && pwErr == nil:
+			// The new password is in the keychain: drop any legacy copy.
+			_, err = s.db.Exec(`UPDATE ssh_profiles SET password='' WHERE id=?`, p.ID)
 		case p.ClearPassword:
 			s.deleteSecret(p.ID)
 			_, err = s.db.Exec(`UPDATE ssh_profiles SET password='' WHERE id=?`, p.ID)
 		}
-		return err
+		if err != nil {
+			return err
+		}
+		return pwErr
 	}
 
 	_, err = s.db.Exec(`INSERT INTO ssh_profiles (`+sshColumns+`) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		p.ID, p.Name, p.Host, p.Port, p.Username, p.AuthType, dbPassword, p.KeyPath, p.FolderID, sortOrder,
+		p.ID, p.Name, p.Host, p.Port, p.Username, p.AuthType, "", p.KeyPath, p.FolderID, sortOrder,
 		boolInt(p.AllowLegacyAlgorithms), boolInt(p.AgentForwarding), p.JumpProfileID, string(tunnelsJSON), boolInt(p.SFTPOnly))
-	return err
+	if err != nil {
+		return err
+	}
+	return pwErr
 }
 
 func (s *Store) deleteSecret(id string) {
@@ -473,13 +509,19 @@ func (s *Store) SaveRDPProfile(p rdp.RDPProfile) error {
 		return err
 	}
 
-	// A new password goes to the keychain; the DB column is only a fallback.
+	// A new password goes to the keychain only; the DB column is a legacy
+	// value that is kept (never rewritten) until a keychain copy replaces it.
 	dbPassword := oldPassword
+	var pwErr error
 	switch {
 	case p.Password != "":
-		dbPassword = ""
-		if s.secrets == nil || s.secrets.Set(rdpSecretKey(p.ID), p.Password) != nil {
-			dbPassword = p.Password
+		if s.secrets == nil {
+			pwErr = ErrKeychainUnavailable
+		} else if err := s.secrets.Set(rdpSecretKey(p.ID), p.Password); err != nil {
+			log.Printf("store: keychain write failed: %v", err)
+			pwErr = ErrKeychainUnavailable
+		} else {
+			dbPassword = ""
 		}
 	case p.ClearPassword:
 		dbPassword = ""
@@ -503,7 +545,10 @@ ON CONFLICT(id) DO UPDATE SET
     domain=excluded.domain, password=excluded.password, width=excluded.width, height=excluded.height,
     fullscreen=excluded.fullscreen, folder_id=excluded.folder_id, options=excluded.options
 `, p.ID, p.Name, p.Host, p.Port, p.Username, p.Domain, dbPassword, p.Width, p.Height, fullscreen, p.FolderID, sortOrder, string(opts))
-	return err
+	if err != nil {
+		return err
+	}
+	return pwErr
 }
 
 func (s *Store) DeleteRDPProfile(id string) error {

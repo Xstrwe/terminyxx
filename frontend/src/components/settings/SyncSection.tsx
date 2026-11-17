@@ -38,6 +38,9 @@ export function SyncSection() {
       if (r.hosts + r.folders + r.snippets === 0) return;
       window.dispatchEvent(new Event(LIBRARY_CHANGED));
       dialogs.toast(`Merged ${r.hosts} hosts, ${r.folders} folders and ${r.snippets} snippets.`, 'success');
+      if (r.passwordsNotSaved > 0) {
+        dialogs.toast(`${r.passwordsNotSaved} saved passwords were not imported: the OS keychain is unavailable.`, 'error');
+      }
     } catch (e) {
       dialogs.toast(String(e).replace(/^Error: /, ''), 'error');
     } finally {

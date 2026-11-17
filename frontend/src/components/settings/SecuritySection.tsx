@@ -76,8 +76,8 @@ export function SecuritySection({ settings, modKey }: { settings: AppSettings; m
           label="Master password"
           hint={
             lock.configured
-              ? 'Set. Terminyxx starts locked and can lock itself; open sessions stay connected while locked.'
-              : 'Set one to lock Terminyxx: terminals, hosts and the sidebar are hidden until you unlock.'
+              ? 'Set. Terminyxx starts locked and can lock itself; open sessions stay connected while locked. The lock hides the app but does not encrypt files on disk; saved passwords live in the OS keychain.'
+              : 'Set one to lock Terminyxx: terminals, hosts and the sidebar are hidden until you unlock. The lock does not encrypt files on disk; saved passwords live in the OS keychain.'
           }
         >
           <div className="flex gap-2">

@@ -3,7 +3,9 @@ package store
 import (
 	"database/sql"
 	"errors"
+	"os"
 	"path/filepath"
+	"runtime"
 	"testing"
 
 	"terminyxx/internal/rdp"
@@ -89,13 +91,62 @@ type failingSecrets struct{ *MemorySecrets }
 
 func (*failingSecrets) Set(string, string) error { return errors.New("no keychain") }
 
-func TestPasswordFallbackWithoutKeychain(t *testing.T) {
+func TestNoPlaintextPasswordWithoutKeychain(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "t.db")
+	s, err := Open(path, &failingSecrets{NewMemorySecrets()})
+	must(t, err)
+	defer s.Close()
+	err = s.SaveSSHProfile(SSHProfile{ID: "x", Name: "x", Host: "h", Port: 22, Username: "u", AuthType: "password", Password: "pw"})
+	if !errors.Is(err, ErrKeychainUnavailable) {
+		t.Fatalf("SaveSSHProfile error = %v, want ErrKeychainUnavailable", err)
+	}
+	// The host itself is saved, the password is not.
+	got, err := s.GetSSHProfile("x")
+	must(t, err)
+	if got.Host != "h" || got.HasPassword {
+		t.Fatalf("unexpected profile %+v", got)
+	}
+	var dbPassword string
+	must(t, s.db.QueryRow(`SELECT password FROM ssh_profiles WHERE id='x'`).Scan(&dbPassword))
+	if dbPassword != "" {
+		t.Fatalf("plaintext password written to the database")
+	}
+
+	err = s.SaveRDPProfile(rdp.RDPProfile{ID: "r", Name: "r", Host: "h", Port: 3389, Password: "pw"})
+	if !errors.Is(err, ErrKeychainUnavailable) {
+		t.Fatalf("SaveRDPProfile error = %v, want ErrKeychainUnavailable", err)
+	}
+	must(t, s.db.QueryRow(`SELECT password FROM rdp_profiles WHERE id='r'`).Scan(&dbPassword))
+	if dbPassword != "" {
+		t.Fatalf("plaintext RDP password written to the database")
+	}
+}
+
+func TestLegacyPlaintextPasswordStillReadable(t *testing.T) {
 	s, err := Open(filepath.Join(t.TempDir(), "t.db"), &failingSecrets{NewMemorySecrets()})
 	must(t, err)
 	defer s.Close()
-	must(t, s.SaveSSHProfile(SSHProfile{ID: "x", Name: "x", Host: "h", Port: 22, Username: "u", AuthType: "password", Password: "pw"}))
-	if pw, _ := s.SSHPassword("x"); pw != "pw" {
-		t.Fatalf("fallback password = %q", pw)
+	must(t, s.SaveSSHProfile(SSHProfile{ID: "x", Name: "x", Host: "h", Port: 22, Username: "u", AuthType: "password"}))
+	_, err = s.db.Exec(`UPDATE ssh_profiles SET password='old' WHERE id='x'`)
+	must(t, err)
+	if pw, _ := s.SSHPassword("x"); pw != "old" {
+		t.Fatalf("legacy password = %q", pw)
+	}
+}
+
+func TestDatabaseFilePermissions(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("POSIX permissions")
+	}
+	path := filepath.Join(t.TempDir(), "t.db")
+	must(t, os.WriteFile(path, nil, 0o644))
+	s, err := Open(path, NewMemorySecrets())
+	must(t, err)
+	defer s.Close()
+	fi, err := os.Stat(path)
+	must(t, err)
+	if fi.Mode().Perm() != 0o600 {
+		t.Fatalf("database mode = %v, want 0600", fi.Mode().Perm())
 	}
 }
 

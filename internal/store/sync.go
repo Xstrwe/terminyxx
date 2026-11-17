@@ -1,6 +1,7 @@
 package store
 
 import (
+	"errors"
 	"fmt"
 
 	"terminyxx/internal/rdp"
@@ -24,6 +25,9 @@ type ImportResult struct {
 	Folders  int `json:"folders"`
 	Hosts    int `json:"hosts"`
 	Snippets int `json:"snippets"`
+	// PasswordsNotSaved counts hosts imported without their password
+	// because the OS keychain was unavailable.
+	PasswordsNotSaved int `json:"passwordsNotSaved"`
 }
 
 // ExportBundle collects the data to sync. Saved passwords are included only
@@ -111,7 +115,9 @@ func (s *Store) ImportBundle(b Bundle) (ImportResult, error) {
 		if p.FolderID != "" && !s.folderExists(p.FolderID) {
 			p.FolderID = ""
 		}
-		if err := s.SaveSSHProfile(p); err != nil {
+		if err := s.SaveSSHProfile(p); errors.Is(err, ErrKeychainUnavailable) {
+			res.PasswordsNotSaved++
+		} else if err != nil {
 			return res, err
 		}
 		res.Hosts++
@@ -120,7 +126,9 @@ func (s *Store) ImportBundle(b Bundle) (ImportResult, error) {
 		if p.FolderID != "" && !s.folderExists(p.FolderID) {
 			p.FolderID = ""
 		}
-		if err := s.SaveRDPProfile(p); err != nil {
+		if err := s.SaveRDPProfile(p); errors.Is(err, ErrKeychainUnavailable) {
+			res.PasswordsNotSaved++
+		} else if err != nil {
 			return res, err
 		}
 		res.Hosts++
