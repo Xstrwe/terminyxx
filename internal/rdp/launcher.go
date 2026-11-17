@@ -2,6 +2,7 @@ package rdp
 
 import (
 	"fmt"
+	"os"
 	"strings"
 )
 
@@ -12,6 +13,26 @@ type Launcher interface {
 
 func NewLauncher() Launcher {
 	return newPlatformLauncher()
+}
+
+// writeTempRDP writes content to a new, uniquely named .rdp file in the temp
+// folder. os.CreateTemp uses O_EXCL and mode 0600, so another local user
+// cannot pre-create or swap the file (a predictable name allowed that).
+func writeTempRDP(content string) (string, error) {
+	f, err := os.CreateTemp("", "terminyxx-*.rdp")
+	if err != nil {
+		return "", err
+	}
+	if _, err := f.WriteString(content); err != nil {
+		f.Close()
+		_ = os.Remove(f.Name())
+		return "", err
+	}
+	if err := f.Close(); err != nil {
+		_ = os.Remove(f.Name())
+		return "", err
+	}
+	return f.Name(), nil
 }
 
 func defaultInt(value, fallback int) int {

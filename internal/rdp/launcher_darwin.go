@@ -8,7 +8,6 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
-	"path/filepath"
 	"strings"
 	"time"
 )
@@ -27,15 +26,15 @@ func newPlatformLauncher() Launcher {
 // whatever app handles .rdp files when that one isn't installed. The client
 // has no way to receive a password through the file, so it is ignored here.
 func (l *platformLauncher) Launch(profile RDPProfile, _ string) error {
-	filePath := filepath.Join(os.TempDir(), fmt.Sprintf("terminyxx-%s.rdp", profile.ID))
-	if err := os.WriteFile(filePath, []byte(buildRDPFile(profile, false)), 0o600); err != nil {
+	filePath, err := writeTempRDP(buildRDPFile(profile, false))
+	if err != nil {
 		return fmt.Errorf("write rdp file: %w", err)
 	}
 
 	// `open` returns once Launch Services has handed the file over (or failed
 	// to), so run it to completion: a missing client must surface as an error
 	// instead of silently doing nothing.
-	err := runOpen("-b", microsoftRDCBundleID, filePath)
+	err = runOpen("-b", microsoftRDCBundleID, filePath)
 	if err != nil {
 		err = runOpen(filePath)
 	}
