@@ -53,30 +53,33 @@ export function XTermWrapper({ connectionId, visible, focused, connected, menuEx
     const container = containerRef.current;
     if (!container) return;
 
+    // Links come from the remote side: open only web links, and only after
+    // showing the full target, both for OSC 8 hyperlinks (whose visible
+    // text can differ) and for plain URLs detected in the output.
+    const confirmOpen = (uri: string) => {
+      if (!/^https?:\/\//i.test(uri)) return;
+      void dialogs
+        .confirm({ title: 'Open link?', confirmLabel: 'Open in browser', message: <code className="block text-xs break-all text-accent">{uri}</code> })
+        .then((ok) => {
+          if (ok) void OpenURL(uri).catch(() => {});
+        });
+    };
+
     const term = new Terminal({
       ...terminalOptions(getSettings()),
       cursorWidth: 2,
       letterSpacing: 0,
       allowProposedApi: true,
       allowTransparency: true,
-      // OSC 8 hyperlinks come from the remote side: open only web links, and
-      // only after showing the real target (the visible text can differ).
       linkHandler: {
         allowNonHttpProtocols: false,
-        activate: (_e, uri) => {
-          if (!/^https?:\/\//i.test(uri)) return;
-          void dialogs
-            .confirm({ title: 'Open link?', confirmLabel: 'Open in browser', message: <code className="block text-xs break-all text-accent">{uri}</code> })
-            .then((ok) => {
-              if (ok) void OpenURL(uri).catch(() => {});
-            });
-        },
+        activate: (_e, uri) => confirmOpen(uri),
       },
     });
     container.style.background = themeById(getSettings().appearance.themeId).colors.background;
     const fit = new FitAddon();
     term.loadAddon(fit);
-    term.loadAddon(new WebLinksAddon((_e, uri) => void OpenURL(uri).catch(() => {})));
+    term.loadAddon(new WebLinksAddon((_e, uri) => confirmOpen(uri)));
     term.open(container);
     termRef.current = term;
     fitRef.current = fit;

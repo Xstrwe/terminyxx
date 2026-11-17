@@ -2,7 +2,10 @@ package main
 
 import (
 	"errors"
+	"fmt"
+	"io"
 	"net/url"
+	"os"
 	"os/exec"
 	goruntime "runtime"
 	"strings"
@@ -70,4 +73,25 @@ func openFolder(dir string) error {
 	// explorer.exe exits with 1 even on success; just reap the process.
 	go func() { _ = cmd.Wait() }()
 	return nil
+}
+
+// maxSyncFileSize bounds the sync file ImportSync reads into memory; real
+// files (hosts, folders, snippets) are a few hundred KB at most.
+const maxSyncFileSize = 64 << 20
+
+// readFileLimited reads a whole file, refusing files larger than limit.
+func readFileLimited(path string, limit int64) ([]byte, error) {
+	f, err := os.Open(path)
+	if err != nil {
+		return nil, err
+	}
+	defer f.Close()
+	data, err := io.ReadAll(io.LimitReader(f, limit+1))
+	if err != nil {
+		return nil, err
+	}
+	if int64(len(data)) > limit {
+		return nil, fmt.Errorf("the file is larger than %d MB", limit>>20)
+	}
+	return data, nil
 }

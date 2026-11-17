@@ -372,7 +372,7 @@ func (a *App) ImportSync(passphrase string) (store.ImportResult, error) {
 	if err != nil || path == "" {
 		return res, err
 	}
-	data, err := os.ReadFile(path)
+	data, err := readFileLimited(path, maxSyncFileSize)
 	if err != nil {
 		return res, err
 	}
