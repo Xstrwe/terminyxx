@@ -12,7 +12,8 @@
       "runtimeExecutable": "wails",
       "runtimeArgs": ["dev", "-browser=false"],
       "env": {
-        "TERMINYXX_DATA_DIR": "C:\\Users\\ALS\\AppData\\Local\\Temp\\claude\\a7d5ca2052601c89\\95015acb-c536-451e-a2be-2fb566007656\\scratchpad\\data3"
+        "TERMINYXX_DATA_DIR": "C:\\Users\\ALS\\AppData\\Local\\Temp\\claude\\a7d5ca2052601c89\\95015acb-c536-451e-a2be-2fb566007656\\scratchpad\\data3",
+        "TERMINYXX_RDP_TRACE": "1"
       },
       "port": 34115
     }

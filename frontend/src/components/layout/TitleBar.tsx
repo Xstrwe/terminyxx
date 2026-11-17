@@ -1,5 +1,5 @@
 import { useRef } from 'react';
-import { Minus, PanelLeft, Plus, Search, Settings, Square, X } from 'lucide-react';
+import { House, Minus, PanelLeft, Search, Settings, Square, X } from 'lucide-react';
 import { Quit, WindowMinimise, WindowToggleMaximise } from '../../../wailsjs/runtime/runtime';
 import type { TerminalTab } from '../../types';
 import { hostColor, modKey } from '../../lib/hosts';
@@ -107,6 +107,14 @@ export function TitleBar({
         <button className={`icon-btn ${sidebarOpen ? 'text-gray-200' : ''}`} onClick={onToggleSidebar} title={`Toggle sidebar (${modKey(platform)}+Shift+B)`}>
           <PanelLeft size={15} />
         </button>
+        <button
+          className={`icon-btn flex-shrink-0 ${activeTabId === null && groups.length > 0 ? 'bg-white/[0.07] text-gray-100' : ''}`}
+          onClick={onHome}
+          title="Home"
+          aria-label="Home"
+        >
+          <House size={15} />
+        </button>
       </div>
 
       <nav className="no-drag flex items-center gap-1 min-w-0 overflow-x-auto [&::-webkit-scrollbar]:hidden" {...detachZone}>
@@ -206,14 +214,6 @@ export function TitleBar({
             </div>
           );
         })}
-        <button
-          className={`icon-btn flex-shrink-0 ${activeTabId === null && groups.length > 0 ? 'bg-white/[0.07] text-gray-100' : ''}`}
-          onClick={onHome}
-          title="New tab"
-          aria-label="New tab"
-        >
-          <Plus size={15} />
-        </button>
       </nav>
 
       <div className="flex-1 h-full" onDoubleClick={() => WindowToggleMaximise()} {...detachZone} />

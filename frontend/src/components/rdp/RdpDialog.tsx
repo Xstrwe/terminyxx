@@ -4,6 +4,7 @@ import { Modal } from '../ui/Dialogs';
 import { Field, ProtocolSwitch, Toggle } from '../terminal/ConnectDialog';
 import { DEFAULT_RDP_OPTIONS } from '../../lib/profiles';
 import { SelectFolder } from '../../../wailsjs/go/main/App';
+import { useSettings } from '../../lib/settings';
 
 interface RdpDialogProps {
   initial?: Partial<RDPProfile>;
@@ -34,6 +35,10 @@ export function RdpDialog({ initial, onClose, onSave, onSwitchToSsh }: RdpDialog
   const [port, setPort] = useState(initial?.port ?? 3389);
   const [username, setUsername] = useState(initial?.username ?? '');
   const [domain, setDomain] = useState(initial?.domain ?? '');
+  // With the built-in client, options it doesn't support are hidden (their
+  // saved values stay and still apply when the host is opened in the
+  // system client).
+  const builtin = useSettings().rdp.builtin;
   const [password, setPassword] = useState('');
   const [clearPassword, setClearPassword] = useState(false);
   const [width, setWidth] = useState(initial?.width ?? 1920);
@@ -96,7 +101,11 @@ export function RdpDialog({ initial, onClose, onSave, onSwitchToSsh }: RdpDialog
         </div>
         <Field
           label="Password"
-          hint={isMac ? 'Microsoft Remote Desktop cannot receive a saved password; you will be asked to enter it.' : 'Stored in the OS keychain and handed to the Windows credential store when you connect.'}
+          hint={
+            isMac
+              ? 'Stored in the Keychain and used by the built-in client. Windows App (system client) asks for it itself.'
+              : 'Stored in the OS keychain. Used by the built-in client and handed to Remote Desktop Connection when you open the system client.'
+          }
         >
           <input
             className="input-field"
@@ -142,24 +151,28 @@ export function RdpDialog({ initial, onClose, onSave, onSwitchToSsh }: RdpDialog
         <div className="space-y-2.5">
           <Toggle checked={fullscreen} onChange={setFullscreen} label="Full screen" />
           <Toggle checked={opts.dynamicRes} onChange={(v) => set('dynamicRes', v)} label="Resize the remote desktop with the window" />
-          <Toggle checked={opts.smartSizing} onChange={(v) => set('smartSizing', v)} label="Scale the remote desktop to the window" />
-          {!isMac && <Toggle checked={opts.multiMon} onChange={(v) => set('multiMon', v)} label="Use all monitors" />}
-          {!isMac && <Toggle checked={opts.admin} onChange={(v) => set('admin', v)} label="Connect to the admin (console) session" />}
+          {!builtin && <Toggle checked={opts.smartSizing} onChange={(v) => set('smartSizing', v)} label="Scale the remote desktop to the window" />}
+          {!builtin && !isMac && <Toggle checked={opts.multiMon} onChange={(v) => set('multiMon', v)} label="Use all monitors" />}
+          {!builtin && !isMac && <Toggle checked={opts.admin} onChange={(v) => set('admin', v)} label="Connect to the admin (console) session" />}
         </div>
 
         <div className="border-t border-white/[0.06] pt-3 space-y-2.5">
           <span className="label">Local resources</span>
           <Toggle checked={opts.clipboard} onChange={(v) => set('clipboard', v)} label="Clipboard" />
-          <Toggle checked={opts.printers} onChange={(v) => set('printers', v)} label="Printers" />
-          <Toggle checked={opts.smartCards} onChange={(v) => set('smartCards', v)} label="Smart cards" />
-          <Toggle checked={opts.comPorts} onChange={(v) => set('comPorts', v)} label="Serial (COM) ports" />
-          <Toggle checked={opts.microphone} onChange={(v) => set('microphone', v)} label="Microphone" />
-          {!isMac && <Toggle checked={opts.camera} onChange={(v) => set('camera', v)} label="Cameras" />}
-          {!isMac && <Toggle checked={opts.usb} onChange={(v) => set('usb', v)} label="USB devices" />}
+          {!builtin && (
+            <>
+              <Toggle checked={opts.printers} onChange={(v) => set('printers', v)} label="Printers" />
+              <Toggle checked={opts.smartCards} onChange={(v) => set('smartCards', v)} label="Smart cards" />
+              <Toggle checked={opts.comPorts} onChange={(v) => set('comPorts', v)} label="Serial (COM) ports" />
+              <Toggle checked={opts.microphone} onChange={(v) => set('microphone', v)} label="Microphone" />
+              {!isMac && <Toggle checked={opts.camera} onChange={(v) => set('camera', v)} label="Cameras" />}
+              {!isMac && <Toggle checked={opts.usb} onChange={(v) => set('usb', v)} label="USB devices" />}
+            </>
+          )}
           <div>
             <span className="label">Audio</span>
             <div className="flex gap-1.5">
-              {AUDIO.map((a) => (
+              {AUDIO.filter((a) => !builtin || a.id !== 'remote').map((a) => (
                 <button
                   key={a.id}
                   type="button"
@@ -175,6 +188,7 @@ export function RdpDialog({ initial, onClose, onSave, onSwitchToSsh }: RdpDialog
           </div>
         </div>
 
+        {!builtin && (
         <div className="border-t border-white/[0.06] pt-3 space-y-2.5">
           <span className="label">Shared folders and drives</span>
           <Toggle checked={opts.allDrives} onChange={(v) => set('allDrives', v)} label="Share all local drives" />
@@ -193,12 +207,13 @@ export function RdpDialog({ initial, onClose, onSave, onSwitchToSsh }: RdpDialog
               <button type="button" className="btn-ghost h-7 px-2.5 text-2xs" onClick={addFolder}>
                 Add folder…
               </button>
-              {isMac && <p className="text-2xs text-gray-600">Folder sharing on macOS is configured in Microsoft Remote Desktop itself.</p>}
+              {isMac && <p className="text-2xs text-gray-600">Folder sharing on macOS is configured in Windows App itself.</p>}
             </div>
           )}
         </div>
+        )}
 
-        {!isMac && (
+        {!builtin && !isMac && (
           <Field label="RD Gateway" hint="Optional gateway host, e.g. gw.example.com">
             <input className="input-field font-mono" value={opts.gateway} onChange={(e) => set('gateway', e.target.value)} spellCheck={false} />
           </Field>

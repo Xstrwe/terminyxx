@@ -1,0 +1,4 @@
+# Built IronRDP packages: store byte-for-byte, no line-ending conversion or text diffs.
+frontend/vendor/ironrdp/** -text -diff linguist-vendored
+frontend/vendor/ironrdp/build.sh text eol=lf
+frontend/vendor/ironrdp/README.md text

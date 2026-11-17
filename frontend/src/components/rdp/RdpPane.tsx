@@ -1,11 +1,13 @@
-import { useEffect, useRef } from 'react';
+import { useEffect, useRef, useState } from 'react';
+import { Minimize2, Unplug } from 'lucide-react';
 import type { IronError, UserInteraction } from '@devolutions/iron-remote-desktop';
 import { RDPClose, RDPLastError } from '../../../wailsjs/go/main/App';
 import type { main } from '../../../wailsjs/go/models';
+import { RdpAudioPlayer } from '../../lib/rdpAudio';
 
 type RdpModule = typeof import('@devolutions/iron-remote-desktop-rdp');
 
-// The engine (IronRDP compiled to WebAssembly, ~6 MB) loads on first use.
+// The engine (IronRDP compiled to WebAssembly, ~5 MB) loads on first use.
 let engine: Promise<RdpModule> | null = null;
 function loadEngine(): Promise<RdpModule> {
   engine ??= (async () => {
@@ -45,13 +47,25 @@ async function describe(err: unknown, tabId: string, signingIn: boolean): Promis
   const first = err.backtrace().split('\n')[0];
   // With NLA, Windows answers wrong credentials by dropping the connection
   // (its log says ERROR_LOGON_FAILURE) instead of sending an error code.
-  if (signingIn && !gateway && /WebSocket\s+Closed/i.test(first)) {
+  // Depending on timing the client sees the close or a truncated frame.
+  if (signingIn && !gateway && /WebSocket\s+Closed|not enough bytes/i.test(first)) {
     return { text: 'The server closed the connection during sign-in, usually because of a wrong user name or password', auth: true };
   }
   return { text: gateway || first || 'Connection failed', auth: false };
 }
 
 const even = (n: number) => Math.max(200, Math.floor(n / 2) * 2);
+
+/**
+ * Retina and other high-density screens: the desktop is requested in device
+ * pixels and Windows is asked to scale its UI by the same factor (as Windows
+ * App does), so text is sharp instead of an upscaled low-resolution picture.
+ */
+function displayScale(): { ratio: number; percent: number } {
+  const dpr = Math.min(Math.max(window.devicePixelRatio || 1, 1), 4);
+  const ratio = Math.round(dpr * 4) / 4; // Windows' scale steps are 25%
+  return { ratio, percent: Math.round(ratio * 100) };
+}
 
 /**
  * One built-in RDP session. `session` is single-use (its token expires once
@@ -64,6 +78,10 @@ export function RdpPane({
   visible,
   focused,
   dynamicResolution,
+  fullscreen = false,
+  title = '',
+  onExitFullscreen,
+  onDisconnect,
   onConnected,
   onEnded,
 }: {
@@ -72,6 +90,11 @@ export function RdpPane({
   visible: boolean;
   focused: boolean;
   dynamicResolution: boolean;
+  /** Covers the whole window (the app also puts the window in full screen). */
+  fullscreen?: boolean;
+  title?: string;
+  onExitFullscreen?: () => void;
+  onDisconnect?: () => void;
   onConnected: () => void;
   /** error is null when the session ended normally. */
   onEnded: (error: string | null, authFailed: boolean) => void;
@@ -88,6 +111,9 @@ export function RdpPane({
     let started = false;
     let connected = false;
     const container = host.current!;
+    const audio = (session.audio || 'local') === 'local' ? new RdpAudioPlayer() : null;
+    const resumeAudio = () => audio?.resume();
+    container.addEventListener('pointerdown', resumeAudio);
     // The ticket is single-use: start on the next tick so a StrictMode
     // mount/unmount/mount (dev) doesn't spend it on a throwaway mount.
     const timer = window.setTimeout(() => {
@@ -115,9 +141,11 @@ export function RdpPane({
         u.setEnableClipboard(session.clipboard);
 
         const rect = container.getBoundingClientRect();
-        const width = dynamicResolution || !session.width ? even(rect.width) : session.width;
-        const height = dynamicResolution || !session.height ? even(rect.height) : session.height;
-        const config = u
+        const fitPane = dynamicResolution || !session.width || !session.height;
+        const { ratio, percent } = displayScale();
+        const width = fitPane ? even(rect.width * ratio) : session.width;
+        const height = fitPane ? even(rect.height * ratio) : session.height;
+        const builder = u
           .configBuilder()
           .withUsername(session.username)
           .withPassword(session.password)
@@ -126,8 +154,10 @@ export function RdpPane({
           .withProxyAddress(session.proxyUrl)
           .withAuthToken(session.token)
           .withDesktopSize({ width, height })
-          .withExtension(rdp.displayControl(true))
-          .build();
+          .withExtension(rdp.displayControl(true));
+        if (fitPane && percent > 100) builder.withExtension(rdp.desktopScaleFactor(percent));
+        if (audio) builder.withExtension(rdp.audioPlayback(audio.onMessage));
+        const config = builder.build();
 
         const info = await u.connect(config);
         connected = true;
@@ -152,6 +182,8 @@ export function RdpPane({
     return () => {
       cancelled = true;
       window.clearTimeout(timer);
+      container.removeEventListener('pointerdown', resumeAudio);
+      audio?.close();
       if (!started) return;
       live.current = false;
       try {
@@ -180,10 +212,13 @@ export function RdpPane({
       timer = window.setTimeout(() => {
         const r = container.getBoundingClientRect();
         if (!live.current || r.width < 50 || r.height < 50) return;
-        const key = `${even(r.width)}x${even(r.height)}`;
+        const { ratio, percent } = displayScale();
+        const w = even(r.width * ratio);
+        const h = even(r.height * ratio);
+        const key = `${w}x${h}@${percent}`;
         if (key === last) return;
         last = key;
-        ui.current?.resize(even(r.width), even(r.height));
+        ui.current?.resize(w, h, percent);
       }, 400);
     });
     ro.observe(container);
@@ -194,8 +229,82 @@ export function RdpPane({
   }, [dynamicResolution]);
 
   useEffect(() => {
-    if (visible && focused) element.current?.focus();
-  }, [visible, focused]);
+    if ((visible && focused) || fullscreen) element.current?.focus();
+  }, [visible, focused, fullscreen]);
 
-  return <div ref={host} className="absolute inset-0 bg-black overflow-hidden" />;
+  return (
+    <div ref={host} className={`${fullscreen ? 'fixed z-[55]' : 'absolute'} inset-0 bg-black overflow-hidden`}>
+      {fullscreen && (
+        <FullscreenBar
+          title={title}
+          onExit={() => {
+            onExitFullscreen?.();
+          }}
+          onDisconnect={() => onDisconnect?.()}
+          refocus={() => element.current?.focus()}
+        />
+      )}
+    </div>
+  );
+}
+
+/**
+ * The connection bar of a full-screen session (like mstsc's): hidden at the
+ * top edge, slides down when the pointer reaches it. Keyboard focus goes back
+ * to the remote desktop after each click, so shortcuts keep reaching it.
+ */
+function FullscreenBar({
+  title,
+  onExit,
+  onDisconnect,
+  refocus,
+}: {
+  title: string;
+  onExit: () => void;
+  onDisconnect: () => void;
+  refocus: () => void;
+}) {
+  const [shown, setShown] = useState(true);
+  const hideTimer = useRef(0);
+  // Show briefly on entry so the user learns where it is.
+  useEffect(() => {
+    hideTimer.current = window.setTimeout(() => setShown(false), 2500);
+    return () => window.clearTimeout(hideTimer.current);
+  }, []);
+  const show = () => {
+    window.clearTimeout(hideTimer.current);
+    setShown(true);
+  };
+  const hide = () => {
+    window.clearTimeout(hideTimer.current);
+    hideTimer.current = window.setTimeout(() => setShown(false), 600);
+  };
+  const mod = navigator.platform.toLowerCase().includes('mac') ? '⌘⌥' : 'Ctrl+Alt+';
+  return (
+    <>
+      <div className="absolute top-0 inset-x-0 h-1.5 z-10" onPointerEnter={show} />
+      <div
+        className={`absolute top-0 left-1/2 -translate-x-1/2 z-20 flex items-center gap-1 pl-4 pr-1.5 py-1.5 rounded-b-xl bg-surface-raised/95 backdrop-blur-xl shadow-pop ring-1 ring-white/[0.06] transition-transform duration-200 ${
+          shown ? 'translate-y-0' : '-translate-y-full'
+        }`}
+        onPointerEnter={show}
+        onPointerLeave={hide}
+      >
+        <span className="text-[12px] text-gray-300 max-w-[40vw] truncate pr-2">{title}</span>
+        <button
+          className="btn-secondary h-7 px-2.5 text-xs"
+          title={`Exit full screen (${mod}Enter)`}
+          onClick={() => {
+            onExit();
+            refocus();
+          }}
+        >
+          <Minimize2 size={13} /> Exit full screen
+        </button>
+        <button className="icon-btn w-7 h-7 text-red-300 hover:text-red-200" title="Disconnect" onClick={onDisconnect}>
+          <Unplug size={14} />
+        </button>
+      </div>
+    </>
+  );
 }

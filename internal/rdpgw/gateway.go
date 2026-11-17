@@ -226,6 +226,10 @@ func dialServer(ctx context.Context, host string, port int, x224 []byte) (*tls.C
 		// self-signed.
 		InsecureSkipVerify: true, //nolint:gosec
 		MinVersion:         tls.VersionTLS12,
+		// Windows' RDP server completes a TLS 1.3 handshake and then sends
+		// an internal_error alert, so CredSSP never starts (it logs a
+		// misleading ERROR_LOGON_FAILURE). mstsc and Windows App use 1.2.
+		MaxVersion: tls.VersionTLS12,
 	}
 	if net.ParseIP(host) == nil {
 		cfg.ServerName = host
@@ -377,17 +381,30 @@ func (g *Gateway) session(ctx context.Context, ws *websocket.Conn) error {
 
 // relay copies the RDP stream both ways until either side closes.
 func relay(ws *websocket.Conn, conn net.Conn) {
+	start := time.Now()
+	if traceEnabled {
+		log.Printf("rdptrace: relay started")
+	}
+	up := &signInTracer{dir: "client->server"}
+	down := &signInTracer{dir: "server->client"}
 	done := make(chan struct{}, 2)
 	go func() {
 		defer func() { done <- struct{}{} }()
 		for {
 			mt, data, err := ws.ReadMessage()
 			if err != nil {
+				if traceEnabled {
+					log.Printf("rdptrace client->server: websocket ended after %v: %v", time.Since(start), err)
+				}
 				return
 			}
 			if mt != websocket.BinaryMessage {
+				if traceEnabled {
+					log.Printf("rdptrace client->server: ignored message type %d (%dB)", mt, len(data))
+				}
 				continue
 			}
+			up.feed(data)
 			if _, err := conn.Write(data); err != nil {
 				return
 			}
@@ -399,11 +416,15 @@ func relay(ws *websocket.Conn, conn net.Conn) {
 		for {
 			n, err := conn.Read(buf)
 			if n > 0 {
+				down.feed(buf[:n])
 				if werr := ws.WriteMessage(websocket.BinaryMessage, buf[:n]); werr != nil {
 					return
 				}
 			}
 			if err != nil {
+				if traceEnabled && !down.done {
+					log.Printf("rdptrace server->client: connection ended during sign-in after %v: %v", time.Since(start), err)
+				}
 				_ = ws.WriteControl(websocket.CloseMessage, websocket.FormatCloseMessage(websocket.CloseNormalClosure, ""), time.Now().Add(time.Second))
 				return
 			}

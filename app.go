@@ -158,7 +158,7 @@ func (a *App) SSHConnect(req connection.ConnectRequest) error {
 		req.Jump = jump
 	}
 	if err := a.connMgr.Connect(req); err != nil {
-		return err
+		return localNetworkHint(err)
 	}
 	a.autoStartTunnels(req)
 	return nil

@@ -43,7 +43,7 @@ import { getSettings, updateSecurity, useSettings } from './lib/settings';
 import { modKey, usePlatform } from './lib/hosts';
 import type { QuickTarget } from './lib/hosts';
 import type { RDPProfile, SSHProfile, StreamSpec, TerminalTab } from './types';
-import { EventsOn } from '../wailsjs/runtime/runtime';
+import { EventsOn, WindowFullscreen, WindowIsFullscreen, WindowUnfullscreen } from '../wailsjs/runtime/runtime';
 import { LaunchRDP, OpenURL, RDPClose, SaveRDPProfile, SaveSSHProfile, SSHDisconnect } from '../wailsjs/go/main/App';
 
 type ConnectDialogState = { key: number; tabId: string | null; initial?: Partial<SSHProfile> } | null;
@@ -517,6 +517,47 @@ function App() {
     }
   };
 
+  /** The RDP pane shown in real full screen (window full screen + pane over everything). */
+  const [rdpFull, setRdpFull] = useState<string | null>(null);
+  const enterRdpFullscreen = (id: string) => {
+    setRdpFull(id);
+    WindowFullscreen();
+  };
+  const exitRdpFullscreen = () => {
+    setRdpFull(null);
+    WindowUnfullscreen();
+  };
+  const toggleRdpFullscreen = () => {
+    if (rdpFull) exitRdpFullscreen();
+    else if (activeTab?.rdp && activeTab.status === 'connected') enterRdpFullscreen(activeTab.id);
+  };
+  // Leave full screen when its session ends or closes.
+  useEffect(() => {
+    if (!rdpFull) return;
+    const tab = tabs.find((t) => t.id === rdpFull);
+    if (!tab || tab.status !== 'connected') exitRdpFullscreen();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [rdpFull, tabs]);
+  // The window can also leave full screen on its own (macOS green button,
+  // Ctrl+Cmd+F, a Space switch): follow it.
+  useEffect(() => {
+    if (!rdpFull) return;
+    let timer = 0;
+    const onResize = () => {
+      window.clearTimeout(timer);
+      timer = window.setTimeout(() => {
+        void WindowIsFullscreen().then((full) => {
+          if (!full) setRdpFull(null);
+        });
+      }, 300);
+    };
+    window.addEventListener('resize', onResize);
+    return () => {
+      window.removeEventListener('resize', onResize);
+      window.clearTimeout(timer);
+    };
+  }, [rdpFull]);
+
   const handleRdpEnded = async (tab: TerminalTab, error: string | null, authFailed: boolean) => {
     // Drop the spent ticket (and the password in it); a reconnect gets a new one.
     patchTab(tab.id, { status: 'disconnected', rdpSession: undefined });
@@ -570,6 +611,8 @@ function App() {
     'Ctrl+Shift+M': toggleMasking,
     'Ctrl+Shift+S': () => setSnippetsOpen((v) => !v),
     'Ctrl+Shift+G': toggleBroadcast,
+    // Full screen for RDP panes; Ctrl+Alt+Enter is what other RDP clients use.
+    'Ctrl+Alt+Enter': toggleRdpFullscreen,
     // Move focus between panes (only while split, so the shell keeps Alt+arrows otherwise).
     ...(isSplit
       ? {
@@ -731,7 +774,15 @@ function App() {
                     visible={visible}
                     focused={focused}
                     dynamicResolution={tab.rdp.options?.dynamicRes ?? true}
-                    onConnected={() => patchTab(tab.id, { status: 'connected' })}
+                    fullscreen={rdpFull === tab.id}
+                    title={`${tab.rdp.name} · ${tab.rdp.host}`}
+                    onExitFullscreen={exitRdpFullscreen}
+                    onDisconnect={() => handleDisconnect(tab.id)}
+                    onConnected={() => {
+                      patchTab(tab.id, { status: 'connected' });
+                      // "Full screen" in the host's settings opens it that way.
+                      if (tab.rdp?.fullscreen) enterRdpFullscreen(tab.id);
+                    }}
                     onEnded={(error, auth) => void handleRdpEnded(tab, error, auth)}
                   />
                   )}
@@ -797,6 +848,7 @@ function App() {
         onOpenSnippets={() => setSnippetsOpen(true)}
         onOpenRecordings={() => setRecordingsOpen(true)}
         onOpenContainers={() => activeTab && setContainersFor(activeTab.id)}
+        onRdpFullscreen={() => activeTab && enterRdpFullscreen(activeTab.id)}
         broadcast={broadcast}
         onToggleBroadcast={toggleBroadcast}
       />

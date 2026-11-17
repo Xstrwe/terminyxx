@@ -9,8 +9,8 @@
     "preview": "vite preview"
   },
   "dependencies": {
-    "@devolutions/iron-remote-desktop": "0.11.0",
-    "@devolutions/iron-remote-desktop-rdp": "0.7.0",
+    "@devolutions/iron-remote-desktop": "file:vendor/ironrdp/iron-remote-desktop",
+    "@devolutions/iron-remote-desktop-rdp": "file:vendor/ironrdp/iron-remote-desktop-rdp",
     "@fontsource-variable/inter": "5.2.8",
     "@fontsource-variable/jetbrains-mono": "5.2.8",
     "@xterm/addon-fit": "^0.11.0",

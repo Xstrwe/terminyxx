@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { ProtoBadge } from './ProtoBadge';
-import { Folder as FolderIcon, FolderPlus, Monitor, PanelLeftOpen, Plus, Search, X } from 'lucide-react';
+import { Folder as FolderIcon, FolderPlus, Monitor, Plus, Search, X } from 'lucide-react';
 import type { Folder, RDPProfile, SSHProfile } from '../../types';
 import { Avatar } from '../ui/Avatar';
 import { HostTree } from './HostTree';
@@ -112,9 +112,6 @@ export function Sidebar(props: SidebarProps) {
     return (
       <aside className="relative flex-shrink-0 flex flex-col items-center gap-1 bg-app pb-2" style={{ width: RAIL_WIDTH }}>
         {handle}
-        <button className="icon-btn w-9 h-9" onClick={() => onResize(width, false)} title="Expand sidebar">
-          <PanelLeftOpen size={16} />
-        </button>
         <button className="icon-btn w-9 h-9" onClick={props.onNewHost} title="New host">
           <Plus size={16} />
         </button>

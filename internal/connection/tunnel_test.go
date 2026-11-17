@@ -140,6 +140,64 @@ func TestDynamicSOCKS(t *testing.T) {
 	}
 }
 
+// A tunnel forwards at most maxTunnelConns connections; one more is closed
+// at once, and stopping the tunnel closes the SOCKS connections still open.
+func TestTunnelConnectionCap(t *testing.T) {
+	m, id := connected(t)
+	info, err := m.StartTunnel(id, TunnelSpec{ID: "d", Kind: TunnelDynamic})
+	if err != nil {
+		t.Fatal(err)
+	}
+	conns := make([]net.Conn, 0, maxTunnelConns)
+	defer func() {
+		for _, c := range conns {
+			c.Close()
+		}
+	}()
+	for range maxTunnelConns {
+		c, err := net.DialTimeout("tcp", info.ListenAddr, 3*time.Second)
+		if err != nil {
+			t.Fatal(err)
+		}
+		conns = append(conns, c) // idle in the SOCKS handshake
+	}
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		list, _ := m.ListTunnels(id)
+		if len(list) == 1 && list[0].Active == maxTunnelConns {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("active never reached the cap: %+v", list)
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+
+	extra, err := net.DialTimeout("tcp", info.ListenAddr, 3*time.Second)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer extra.Close()
+	extra.SetDeadline(time.Now().Add(3 * time.Second))
+	extra.Write([]byte{5, 1, 0})
+	if n, err := extra.Read(make([]byte, 2)); err == nil {
+		t.Fatalf("connection over the cap was served (%d bytes)", n)
+	} else if ne, ok := err.(net.Error); ok && ne.Timeout() {
+		t.Fatal("connection over the cap was left open")
+	}
+
+	if err := m.StopTunnel(id, "d"); err != nil {
+		t.Fatal(err)
+	}
+	c := conns[0]
+	c.SetDeadline(time.Now().Add(3 * time.Second))
+	if _, err := c.Read(make([]byte, 1)); err == nil {
+		t.Fatal("expected the connection to be closed")
+	} else if ne, ok := err.(net.Error); ok && ne.Timeout() {
+		t.Fatal("connection still open after StopTunnel")
+	}
+}
+
 func TestTunnelValidation(t *testing.T) {
 	m, id := connected(t)
 	if _, err := m.StartTunnel(id, TunnelSpec{ID: "x", Kind: TunnelLocal}); err == nil {

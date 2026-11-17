@@ -12,6 +12,7 @@ function comboOf(e: KeyboardEvent): string | null {
   else if (e.code === 'BracketLeft') key = '[';
   else if (e.code === 'BracketRight') key = ']';
   else if (e.code === 'Comma') key = ',';
+  else if (e.code === 'Enter' || e.code === 'NumpadEnter') key = 'Enter';
   else if (/^Arrow(Left|Right|Up|Down)$/.test(e.code)) key = e.code.slice(5);
   else return null;
 

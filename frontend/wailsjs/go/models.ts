@@ -419,6 +419,7 @@ export namespace main {
 	    width: number;
 	    height: number;
 	    clipboard: boolean;
+	    audio: string;
 	
 	    static createFrom(source: any = {}) {
 	        return new RDPSession(source);
@@ -435,6 +436,7 @@ export namespace main {
 	        this.width = source["width"];
 	        this.height = source["height"];
 	        this.clipboard = source["clipboard"];
+	        this.audio = source["audio"];
 	    }
 	}
 

@@ -311,7 +311,7 @@ jobs:
           cat > notes.md <<EOF
           # Terminyxx $VERSION
 
-          > SSH terminal, SFTP file manager and RDP launcher for Windows and macOS.
+          > SSH terminal, SFTP file manager and RDP client for Windows and macOS.
 
           ## Downloads
 
