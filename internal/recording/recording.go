@@ -143,41 +143,105 @@ func validName(name string) bool {
 	return name != "" && name == filepath.Base(name) && !strings.ContainsAny(name, `/\`) && strings.HasSuffix(name, ext) && !strings.HasPrefix(name, ".")
 }
 
-func readFile(path string) (Recording, error) {
-	var rec Recording
+// openRecording opens path and parses its header line. The returned scanner
+// is positioned at the first event.
+func openRecording(path string) (*os.File, *bufio.Scanner, Info, error) {
+	var info Info
 	f, err := os.Open(path)
 	if err != nil {
-		return rec, err
+		return nil, nil, info, err
 	}
-	defer f.Close()
-	st, _ := f.Stat()
 	sc := bufio.NewScanner(f)
-	sc.Buffer(make([]byte, 1<<20), 64<<20)
+	sc.Buffer(make([]byte, 64<<10), 64<<20)
 	if !sc.Scan() {
-		return rec, errors.New("empty recording")
+		f.Close()
+		return nil, nil, info, errors.New("empty recording")
 	}
 	var h header
 	if err := json.Unmarshal(sc.Bytes(), &h); err != nil || h.Version != 2 {
-		return rec, errors.New("not an asciicast v2 file")
+		f.Close()
+		return nil, nil, info, errors.New("not an asciicast v2 file")
 	}
-	rec.Info = Info{Name: filepath.Base(path), Title: h.Title, StartedAt: h.Timestamp, Cols: h.Width, Rows: h.Height}
-	if st != nil {
-		rec.Info.Size = st.Size()
+	info = Info{Name: filepath.Base(path), Title: h.Title, StartedAt: h.Timestamp, Cols: h.Width, Rows: h.Height}
+	if st, err := f.Stat(); err == nil {
+		info.Size = st.Size()
 	}
-	rec.Events = []Event{}
+	return f, sc, info, nil
+}
+
+// parseEvent decodes one event line; ok is false for a malformed (e.g.
+// half-written) line.
+func parseEvent(line []byte) (e Event, ok bool) {
+	var raw []json.RawMessage
+	if json.Unmarshal(line, &raw) != nil || len(raw) != 3 {
+		return e, false
+	}
+	if json.Unmarshal(raw[0], &e.Time) != nil || json.Unmarshal(raw[1], &e.Kind) != nil || json.Unmarshal(raw[2], &e.Data) != nil {
+		return e, false
+	}
+	return e, true
+}
+
+// eachEvent streams the events of a recording to fn without keeping them in
+// memory; fn returns false to stop early.
+func eachEvent(path string, fn func(Info, Event) bool) (Info, error) {
+	f, sc, info, err := openRecording(path)
+	if err != nil {
+		return info, err
+	}
+	defer f.Close()
 	for sc.Scan() {
-		var raw []json.RawMessage
-		if json.Unmarshal(sc.Bytes(), &raw) != nil || len(raw) != 3 {
+		e, ok := parseEvent(sc.Bytes())
+		if !ok {
 			continue // a half-written last line
 		}
-		var e Event
-		if json.Unmarshal(raw[0], &e.Time) != nil || json.Unmarshal(raw[1], &e.Kind) != nil || json.Unmarshal(raw[2], &e.Data) != nil {
-			continue
+		info.Duration = e.Time
+		if !fn(info, e) {
+			break
 		}
-		rec.Events = append(rec.Events, e)
-		rec.Info.Duration = e.Time
 	}
-	return rec, sc.Err()
+	return info, sc.Err()
+}
+
+func readFile(path string) (Recording, error) {
+	rec := Recording{Events: []Event{}}
+	info, err := eachEvent(path, func(_ Info, e Event) bool {
+		rec.Events = append(rec.Events, e)
+		return true
+	})
+	rec.Info = info
+	return rec, err
+}
+
+// tailWindow is how much of the end of a file List reads to find the
+// duration (the time of the last complete event).
+const tailWindow = 64 << 10
+
+// readInfo reads only the header line and the tail of a recording, so
+// listing the library does not parse (up to 256 MB) files completely.
+func readInfo(path string) (Info, error) {
+	f, _, info, err := openRecording(path)
+	if err != nil {
+		return info, err
+	}
+	defer f.Close()
+	off := info.Size - tailWindow
+	if off < 0 {
+		off = 0
+	}
+	buf := make([]byte, info.Size-off)
+	n, err := f.ReadAt(buf, off)
+	if err != nil && n == 0 {
+		return info, nil
+	}
+	lines := strings.Split(string(buf[:n]), "\n")
+	for i := len(lines) - 1; i >= 0; i-- {
+		if e, ok := parseEvent([]byte(lines[i])); ok {
+			info.Duration = e.Time
+			break
+		}
+	}
+	return info, nil
 }
 
 // List returns the recordings in dir, newest first.
@@ -194,11 +258,11 @@ func List(dir string) ([]Info, error) {
 		if e.IsDir() || !validName(e.Name()) {
 			continue
 		}
-		rec, err := readFile(filepath.Join(dir, e.Name()))
+		info, err := readInfo(filepath.Join(dir, e.Name()))
 		if err != nil {
 			continue
 		}
-		out = append(out, rec.Info)
+		out = append(out, info)
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].StartedAt > out[j].StartedAt })
 	return out, nil
@@ -236,6 +300,9 @@ type Hit struct {
 	Started int64   `json:"startedAt"`
 }
 
+// maxLine caps how much of one output line Search keeps for matching.
+const maxLine = 16 << 10
+
 // Search finds lines containing query (case-insensitive) in all recordings.
 // Output is joined across events, so a line split over several chunks still
 // matches. At most limit hits are returned.
@@ -250,10 +317,6 @@ func Search(dir, query string, limit int) ([]Hit, error) {
 	}
 	hits := []Hit{}
 	for _, info := range infos {
-		rec, err := Read(dir, info.Name)
-		if err != nil {
-			continue
-		}
 		var cur strings.Builder
 		var lineStart float64
 		flush := func() {
@@ -266,9 +329,10 @@ func Search(dir, query string, limit int) ([]Hit, error) {
 				hits = append(hits, Hit{Name: info.Name, Title: info.Title, Time: lineStart, Line: line, Started: info.StartedAt})
 			}
 		}
-		for _, e := range rec.Events {
+		// Stream the file: a recording can be up to 256 MB.
+		_, err := eachEvent(filepath.Join(dir, info.Name), func(_ Info, e Event) bool {
 			if e.Kind != "o" {
-				continue
+				return true
 			}
 			text := ansi.ReplaceAllString(e.Data, "")
 			for _, ch := range text {
@@ -280,11 +344,16 @@ func Search(dir, query string, limit int) ([]Hit, error) {
 					if cur.Len() == 0 {
 						lineStart = e.Time
 					}
-					if ch >= ' ' || ch == '\t' {
+					// Bound a line that never ends (no newline in the output).
+					if (ch >= ' ' || ch == '\t') && cur.Len() < maxLine {
 						cur.WriteRune(ch)
 					}
 				}
 			}
+			return len(hits) < limit
+		})
+		if err != nil {
+			continue
 		}
 		flush()
 		if len(hits) >= limit {

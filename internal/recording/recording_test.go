@@ -33,6 +33,10 @@ func TestRecordAndPlayback(t *testing.T) {
 	if len(list) != 1 || list[0].Title != "root@host:22" {
 		t.Fatalf("list %+v", list)
 	}
+	// List reads only the header and the tail but reports the same info.
+	if list[0] != rec.Info {
+		t.Fatalf("list info %+v, read info %+v", list[0], rec.Info)
+	}
 
 	// The line is split across two chunks and has colour codes: still found.
 	hits, _ := Search(dir, "HELLO world", 10)
