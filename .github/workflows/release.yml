@@ -9,8 +9,10 @@ on:
     tags: ['v*']
   workflow_dispatch:
 
+# Least privilege: every job can only read the repo. The release job is the
+# only one that gets write access (to publish) and OIDC (to attest).
 permissions:
-  contents: write
+  contents: read
 
 env:
   WAILS_VERSION: v2.13.0
@@ -25,7 +27,9 @@ jobs:
       numeric: ${{ steps.v.outputs.numeric }}
       prerelease: ${{ steps.v.outputs.prerelease }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
       - id: v
         run: |
           if [ "$GITHUB_REF_TYPE" = tag ]; then v="${GITHUB_REF_NAME#v}"; else v=$(jq -r .info.productVersion wails.json); fi
@@ -49,13 +53,18 @@ jobs:
             arch: arm64
     env:
       VERSION: ${{ needs.version.outputs.version }}
+      # Signing is optional: forks and builds without the certificate secrets
+      # fall back to the previous unsigned output.
+      HAS_WIN_SIGNING: ${{ secrets.WINDOWS_CERT_PFX_BASE64 != '' }}
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
         with:
           go-version: ${{ env.GO_VERSION }}
           cache-dependency-path: go.sum
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version: ${{ env.NODE_VERSION }}
           cache: npm
@@ -82,11 +91,29 @@ jobs:
           Write-Host "PE machine 0x$m"
           if ($m -ne $want) { throw "expected 0x$want" }
 
+      # Authenticode signing runs only when the signing certificate secrets are
+      # configured; otherwise the exe stays unsigned, exactly as before.
+      - name: Sign exe (Authenticode)
+        if: env.HAS_WIN_SIGNING == 'true'
+        shell: pwsh
+        env:
+          WINDOWS_CERT_PFX_BASE64: ${{ secrets.WINDOWS_CERT_PFX_BASE64 }}
+          WINDOWS_CERT_PASSWORD: ${{ secrets.WINDOWS_CERT_PASSWORD }}
+        run: |
+          $pfx = Join-Path $env:RUNNER_TEMP 'sign.pfx'
+          [IO.File]::WriteAllBytes($pfx, [Convert]::FromBase64String($env:WINDOWS_CERT_PFX_BASE64))
+          $signtool = Get-ChildItem "${env:ProgramFiles(x86)}\Windows Kits\10\bin\*\x64\signtool.exe" | Sort-Object FullName -Descending | Select-Object -First 1
+          if (-not $signtool) { throw "signtool.exe not found" }
+          "SIGNTOOL=$($signtool.FullName)" >> $env:GITHUB_ENV
+          "SIGN_PFX=$pfx" >> $env:GITHUB_ENV
+          & $signtool.FullName sign /f $pfx /p $env:WINDOWS_CERT_PASSWORD /fd sha256 /tr http://timestamp.digicert.com /td sha256 build\bin\terminyxx.exe
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
       - name: Install Inno Setup
         shell: pwsh
         run: |
           $iscc = "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe"
-          if (-not (Test-Path $iscc)) { choco install innosetup -y --no-progress }
+          if (-not (Test-Path $iscc)) { choco install innosetup --version 6.7.1 -y --no-progress }
           if (-not (Test-Path $iscc)) { throw "ISCC.exe not found" }
           "ISCC=$iscc" >> $env:GITHUB_ENV
 
@@ -96,6 +123,18 @@ jobs:
           & $env:ISCC "/DAppVersion=$env:VERSION" "/DAppNumVersion=${{ needs.version.outputs.numeric }}" "/DArch=${{ matrix.arch }}" build\windows\installer\terminyxx.iss
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
+      - name: Sign installer (Authenticode)
+        if: env.HAS_WIN_SIGNING == 'true'
+        shell: pwsh
+        env:
+          WINDOWS_CERT_PFX_BASE64: ${{ secrets.WINDOWS_CERT_PFX_BASE64 }}
+          WINDOWS_CERT_PASSWORD: ${{ secrets.WINDOWS_CERT_PASSWORD }}
+        run: |
+          & $env:SIGNTOOL sign /f $env:SIGN_PFX /p $env:WINDOWS_CERT_PASSWORD /fd sha256 /tr http://timestamp.digicert.com /td sha256 "build\bin\Terminyxx-$env:VERSION-windows-${{ matrix.arch }}-setup.exe"
+          $code = $LASTEXITCODE
+          Remove-Item -Force $env:SIGN_PFX
+          if ($code -ne 0) { exit $code }
+
       - name: Collect assets
         shell: pwsh
         run: |
@@ -104,7 +143,7 @@ jobs:
           Copy-Item build\bin\terminyxx.exe "dist\Terminyxx-$env:VERSION-windows-${{ matrix.arch }}-portable.exe"
           Get-ChildItem dist
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: terminyxx-${{ env.VERSION }}-windows-${{ matrix.arch }}
           path: dist/*
@@ -129,13 +168,19 @@ jobs:
       MACOSX_DEPLOYMENT_TARGET: '12.0'
       CGO_CFLAGS: -mmacosx-version-min=12.0
       CGO_LDFLAGS: -mmacosx-version-min=12.0
+      # Developer ID signing + notarization run only when these secrets exist;
+      # otherwise the app is ad-hoc signed exactly as before.
+      HAS_MAC_SIGNING: ${{ secrets.MACOS_CERT_P12_BASE64 != '' && secrets.MACOS_SIGN_IDENTITY != '' }}
+      HAS_MAC_NOTARY: ${{ secrets.APPLE_ID != '' && secrets.APPLE_TEAM_ID != '' && secrets.APPLE_APP_PASSWORD != '' }}
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
         with:
           go-version: ${{ env.GO_VERSION }}
           cache-dependency-path: go.sum
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version: ${{ env.NODE_VERSION }}
           cache: npm
@@ -151,7 +196,7 @@ jobs:
       - name: Build app
         run: wails build -clean -platform darwin/${{ matrix.goarch }} -trimpath -ldflags "-s -w"
 
-      - name: Bundle, check and sign
+      - name: Bundle and check
         run: |
           src=$(ls -d build/bin/*.app | head -1)
           [ "$src" = build/bin/Terminyxx.app ] || mv "$src" build/bin/Terminyxx.app
@@ -161,20 +206,67 @@ jobs:
           [ "$archs" = "${{ matrix.lipo }}" ] || { echo "expected ${{ matrix.lipo }}"; exit 1; }
           minos=$(otool -l "$exe" | awk '/LC_BUILD_VERSION/{f=1} f&&/minos/{print $2; exit}'); echo "minos: $minos"
           [ "${minos%%.*}" -le 12 ] || { echo "minimum macOS is above 12"; exit 1; }
-          # Not notarized: an ad-hoc signature is the minimum Apple Silicon needs to run it.
-          codesign --force --deep --sign - "$app"
-          codesign --verify --deep --strict --verbose=2 "$app"
 
-      - name: Package dmg and zip
+      - name: Sign (ad-hoc)
+        if: env.HAS_MAC_SIGNING != 'true'
+        run: |
+          # Not notarized: an ad-hoc signature is the minimum Apple Silicon needs to run it.
+          codesign --force --deep --sign - build/bin/Terminyxx.app
+          codesign --verify --deep --strict --verbose=2 build/bin/Terminyxx.app
+
+      - name: Sign (Developer ID, hardened runtime)
+        if: env.HAS_MAC_SIGNING == 'true'
+        env:
+          MACOS_CERT_P12_BASE64: ${{ secrets.MACOS_CERT_P12_BASE64 }}
+          MACOS_CERT_PASSWORD: ${{ secrets.MACOS_CERT_PASSWORD }}
+          MACOS_SIGN_IDENTITY: ${{ secrets.MACOS_SIGN_IDENTITY }}
+        run: |
+          kc="$RUNNER_TEMP/signing.keychain-db"
+          kcpass=$(openssl rand -hex 24)
+          echo "$MACOS_CERT_P12_BASE64" | base64 --decode > "$RUNNER_TEMP/cert.p12"
+          security create-keychain -p "$kcpass" "$kc"
+          security set-keychain-settings -lut 21600 "$kc"
+          security unlock-keychain -p "$kcpass" "$kc"
+          security import "$RUNNER_TEMP/cert.p12" -k "$kc" -P "$MACOS_CERT_PASSWORD" -T /usr/bin/codesign
+          security set-key-partition-list -S apple-tool:,apple: -s -k "$kcpass" "$kc" >/dev/null
+          security list-keychains -d user -s "$kc" login.keychain-db
+          rm -f "$RUNNER_TEMP/cert.p12"
+          codesign --force --deep --options runtime --timestamp --sign "$MACOS_SIGN_IDENTITY" build/bin/Terminyxx.app
+          codesign --verify --deep --strict --verbose=2 build/bin/Terminyxx.app
+
+      - name: Package dmg
         run: |
           mkdir -p dist dmg
           cp -R build/bin/Terminyxx.app dmg/
           ln -s /Applications dmg/Applications
           hdiutil create -volname "Terminyxx" -srcfolder dmg -ov -format UDZO "dist/Terminyxx-$VERSION-macos-${{ matrix.arch }}.dmg"
+
+      - name: Sign and notarize dmg
+        if: env.HAS_MAC_SIGNING == 'true' && env.HAS_MAC_NOTARY == 'true'
+        env:
+          MACOS_SIGN_IDENTITY: ${{ secrets.MACOS_SIGN_IDENTITY }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          APPLE_APP_PASSWORD: ${{ secrets.APPLE_APP_PASSWORD }}
+        run: |
+          dmg="dist/Terminyxx-$VERSION-macos-${{ matrix.arch }}.dmg"
+          codesign --force --timestamp --sign "$MACOS_SIGN_IDENTITY" "$dmg"
+          xcrun notarytool submit "$dmg" --apple-id "$APPLE_ID" --team-id "$APPLE_TEAM_ID" --password "$APPLE_APP_PASSWORD" --wait
+          xcrun stapler staple "$dmg"
+          # The dmg ticket also covers the app inside, so the zip gets a stapled app too.
+          xcrun stapler staple build/bin/Terminyxx.app
+          spctl --assess --type open --context context:primary-signature -v "$dmg"
+
+      - name: Package zip
+        run: |
           ditto -c -k --keepParent build/bin/Terminyxx.app "dist/Terminyxx-$VERSION-macos-${{ matrix.arch }}.zip"
           ls -la dist
 
-      - uses: actions/upload-artifact@v4
+      - name: Remove signing keychain
+        if: always() && env.HAS_MAC_SIGNING == 'true'
+        run: security delete-keychain "$RUNNER_TEMP/signing.keychain-db" || true
+
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: terminyxx-${{ env.VERSION }}-macos-${{ matrix.arch }}
           path: dist/*
@@ -184,11 +276,16 @@ jobs:
     needs: [version, windows, macos]
     if: github.ref_type == 'tag'
     runs-on: ubuntu-latest
+    permissions:
+      contents: write     # create the GitHub release
+      id-token: write     # OIDC token for build provenance
+      attestations: write # store the attestation
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
           sparse-checkout: .github/release-notes
-      - uses: actions/download-artifact@v4
+          persist-credentials: false
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
           path: dist
           merge-multiple: true
@@ -196,6 +293,13 @@ jobs:
       - name: Checksums
         working-directory: dist
         run: sha256sum * | tee SHA256SUMS.txt
+
+      # Signed SLSA build provenance, verifiable independently of the release
+      # page: gh attestation verify <file> --repo <owner>/terminyxx
+      - name: Attest build provenance
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        with:
+          subject-path: dist/*
 
       - name: Publish release
         env:
@@ -218,7 +322,7 @@ jobs:
           | 🍎 **macOS** Intel (12+) | [Terminyxx-$VERSION-macos-x64.dmg]($base/Terminyxx-$VERSION-macos-x64.dmg) | [.zip]($base/Terminyxx-$VERSION-macos-x64.zip) |
           | 🍎 **macOS** Apple Silicon (12+) | [Terminyxx-$VERSION-macos-arm64.dmg]($base/Terminyxx-$VERSION-macos-arm64.dmg) | [.zip]($base/Terminyxx-$VERSION-macos-arm64.zip) |
 
-          Verify downloads with [\`SHA256SUMS.txt\`]($base/SHA256SUMS.txt).
+          Verify downloads with [\`SHA256SUMS.txt\`]($base/SHA256SUMS.txt) or, independently of this page, with \`gh attestation verify <file> --repo $GITHUB_REPOSITORY\`.
 
           <details>
           <summary>macOS: "app is damaged" or can't be opened</summary>
