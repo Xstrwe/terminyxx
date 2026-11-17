@@ -32,7 +32,7 @@ type ToastKind = 'info' | 'success' | 'error';
 interface DialogApi {
   confirm(opts: ConfirmOptions): Promise<boolean>;
   prompt(opts: PromptOptions): Promise<string | null>;
-  toast(message: string, kind?: ToastKind, onClick?: () => void): void;
+  toast(message: string, kind?: ToastKind): void;
 }
 
 type ActiveDialog =
@@ -43,7 +43,6 @@ interface Toast {
   id: number;
   message: string;
   kind: ToastKind;
-  onClick?: () => void;
 }
 
 const DialogContext = createContext<DialogApi | null>(null);
@@ -80,10 +79,10 @@ export function DialogProvider({ children }: { children: ReactNode }) {
       }),
     []
   );
-  const toast = useCallback((message: string, kind: ToastKind = 'info', onClick?: () => void) => {
+  const toast = useCallback((message: string, kind: ToastKind = 'info') => {
     const id = nextId.current++;
-    setToasts((t) => [...t, { id, message, kind, onClick }]);
-    setTimeout(() => setToasts((t) => t.filter((x) => x.id !== id)), kind === 'error' || onClick ? 8000 : 4000);
+    setToasts((t) => [...t, { id, message, kind }]);
+    setTimeout(() => setToasts((t) => t.filter((x) => x.id !== id)), kind === 'error' ? 8000 : 4000);
   }, []);
 
   const api = useRef<DialogApi>({ confirm, prompt, toast }).current;
@@ -269,21 +268,10 @@ function ToastView({ toast, onClose }: { toast: Toast; onClose: () => void }) {
   const Icon = toast.kind === 'error' ? XCircle : toast.kind === 'success' ? CheckCircle2 : Info;
   const color = toast.kind === 'error' ? 'text-red-400' : toast.kind === 'success' ? 'text-emerald-400' : 'text-accent';
   return (
-    <div
-      className={`pointer-events-auto flex items-start gap-2.5 rounded-xl bg-surface-raised/95 backdrop-blur-xl shadow-pop pl-3 pr-2 py-2.5 text-[12.5px] animate-slide-up ${toast.onClick ? 'cursor-pointer' : ''}`}
-      onClick={toast.onClick}
-      role={toast.onClick ? 'button' : undefined}
-    >
+    <div className="pointer-events-auto flex items-start gap-2.5 rounded-xl bg-surface-raised/95 backdrop-blur-xl shadow-pop pl-3 pr-2 py-2.5 text-[12.5px] animate-slide-up">
       <Icon size={15} className={`${color} flex-shrink-0 mt-px`} />
       <span className="flex-1 break-words text-gray-200 leading-snug">{toast.message}</span>
-      <button
-        className="icon-btn w-5 h-5 -mt-0.5"
-        onClick={(e) => {
-          e.stopPropagation();
-          onClose();
-        }}
-        aria-label="Dismiss"
-      >
+      <button className="icon-btn w-5 h-5 -mt-0.5" onClick={onClose} aria-label="Dismiss">
         <X size={12} />
       </button>
     </div>

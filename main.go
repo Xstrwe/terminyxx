@@ -15,9 +15,6 @@ import (
 var assets embed.FS
 
 func main() {
-	// Apply a staged update from a previous session before the window opens.
-	applyPendingUpdate(true)
-
 	// Create an instance of the app structure
 	app := NewApp()
 
@@ -37,7 +34,7 @@ func main() {
 		// off in production builds: Wails enables them only for `wails dev`
 		// or `wails build -devtools`. Don't ship builds made with -devtools.
 		EnableDefaultContextMenu: false,
-		BackgroundColour:         &options.RGBA{R: 9, G: 10, B: 13, A: 255},
+		BackgroundColour: &options.RGBA{R: 9, G: 10, B: 13, A: 255},
 		// Files dragged in from Explorer/Finder are uploaded by the SFTP panel
 		// (frontend/src/lib/fileDrop.ts). In-app HTML5 drags are unaffected.
 		DragAndDrop: &options.DragAndDrop{

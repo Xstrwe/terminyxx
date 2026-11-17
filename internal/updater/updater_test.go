@@ -40,12 +40,11 @@ func serve(t *testing.T, status int, body string) string {
 	return srv.URL
 }
 
-const sample = `{"tag_name":"v0.1.2","html_url":"https://github.com/Xstrwe/terminyxx/releases/tag/v0.1.2","body":"notes",
+const sample = `{"tag_name":"v0.1.2","html_url":"https://github.com/Intteger157/terminyxx/releases/tag/v0.1.2","body":"notes",
 "assets":[
-{"name":"Terminyxx-0.1.2-windows-arm64-setup.exe","browser_download_url":"https://github.com/Xstrwe/terminyxx/releases/download/v0.1.2/Terminyxx-0.1.2-windows-arm64-setup.exe"},
-{"name":"Terminyxx-0.1.2-windows-x64-setup.exe","browser_download_url":"https://github.com/Xstrwe/terminyxx/releases/download/v0.1.2/Terminyxx-0.1.2-windows-x64-setup.exe"},
-{"name":"Terminyxx-0.1.2-macos-arm64.dmg","browser_download_url":"https://github.com/Xstrwe/terminyxx/releases/download/v0.1.2/Terminyxx-0.1.2-macos-arm64.dmg"},
-{"name":"SHA256SUMS.txt","browser_download_url":"https://github.com/Xstrwe/terminyxx/releases/download/v0.1.2/SHA256SUMS.txt"}]}`
+{"name":"Terminyxx-0.1.2-windows-arm64-setup.exe","browser_download_url":"https://github.com/Intteger157/terminyxx/releases/download/v0.1.2/Terminyxx-0.1.2-windows-arm64-setup.exe"},
+{"name":"Terminyxx-0.1.2-windows-x64-setup.exe","browser_download_url":"https://github.com/Intteger157/terminyxx/releases/download/v0.1.2/Terminyxx-0.1.2-windows-x64-setup.exe"},
+{"name":"Terminyxx-0.1.2-macos-arm64.dmg","browser_download_url":"https://github.com/Intteger157/terminyxx/releases/download/v0.1.2/Terminyxx-0.1.2-macos-arm64.dmg"}]}`
 
 func TestCheckAvailable(t *testing.T) {
 	r, err := Check(context.Background(), nil, serve(t, 200, sample), "0.1.1", "windows", "amd64")
@@ -62,9 +61,6 @@ func TestCheckAvailable(t *testing.T) {
 	if r.DownloadName != "Terminyxx-0.1.2-macos-arm64.dmg" {
 		t.Fatalf("wrong mac asset %q", r.DownloadName)
 	}
-	if r.ChecksumsName != "SHA256SUMS.txt" || r.ChecksumsURL == "" {
-		t.Fatalf("missing checksums: %+v", r)
-	}
 }
 
 func TestCheckUpToDate(t *testing.T) {
@@ -80,7 +76,7 @@ func TestCheckRejectsForeignURLs(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if r.URL != "https://github.com/Xstrwe/terminyxx/releases/latest" || r.DownloadURL != "" {
+	if r.URL != "https://github.com/Intteger157/terminyxx/releases/latest" || r.DownloadURL != "" {
 		t.Fatalf("foreign URL accepted: %+v", r)
 	}
 }
