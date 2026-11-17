@@ -1,5 +1,5 @@
-// Package updater asks GitHub whether a newer Terminyxx release exists.
-// It never downloads or installs anything: the UI opens the release page.
+// Package updater asks GitHub whether a newer Terminyxx release exists
+// and, for round versions (vX.Y.0), can download, verify and stage it.
 package updater
 
 import (
@@ -14,9 +14,12 @@ import (
 	"time"
 )
 
+// ErrRateLimit is returned when GitHub answers 403 or 429.
+var ErrRateLimit = errors.New("GitHub rate limit reached, try again later")
+
 const (
 	// Repo is the GitHub repository releases are published to.
-	Repo = "Intteger157/terminyxx"
+	Repo = "Xstrwe/terminyxx"
 	// LatestURL returns the newest published, non-draft, non-prerelease release.
 	LatestURL = "https://api.github.com/repos/" + Repo + "/releases/latest"
 
@@ -34,13 +37,18 @@ type Result struct {
 	// DownloadURL/DownloadName point at the installer for this OS and CPU, if the release has one.
 	DownloadURL  string `json:"downloadUrl"`
 	DownloadName string `json:"downloadName"`
+	// ChecksumsURL/ChecksumsName point at SHA256SUMS.txt on the same release.
+	ChecksumsURL  string `json:"checksumsUrl"`
+	ChecksumsName string `json:"checksumsName"`
 }
 
 type release struct {
-	TagName string `json:"tag_name"`
-	HTMLURL string `json:"html_url"`
-	Body    string `json:"body"`
-	Assets  []struct {
+	TagName    string `json:"tag_name"`
+	HTMLURL    string `json:"html_url"`
+	Body       string `json:"body"`
+	Draft      bool   `json:"draft"`
+	Prerelease bool   `json:"prerelease"`
+	Assets     []struct {
 		Name string `json:"name"`
 		URL  string `json:"browser_download_url"`
 	} `json:"assets"`
@@ -67,7 +75,7 @@ func Check(ctx context.Context, client *http.Client, apiURL, current, goos, goar
 	case resp.StatusCode == http.StatusNotFound:
 		return res, errors.New("no releases have been published yet")
 	case resp.StatusCode == http.StatusForbidden || resp.StatusCode == http.StatusTooManyRequests:
-		return res, errors.New("GitHub rate limit reached, try again later")
+		return res, ErrRateLimit
 	case resp.StatusCode != http.StatusOK:
 		return res, fmt.Errorf("GitHub answered %s", resp.Status)
 	}
@@ -85,20 +93,29 @@ func Check(ctx context.Context, client *http.Client, apiURL, current, goos, goar
 		res.URL = releasePrefix + "releases/latest"
 	}
 	res.Notes = rel.Body
+	if rel.Draft || rel.Prerelease {
+		return res, nil
+	}
 	res.Available = Newer(res.Latest, res.Current)
-	if want := assetSuffix(goos, goarch); want != "" {
+	if want := AssetSuffix(goos, goarch); want != "" {
 		for _, a := range rel.Assets {
-			if strings.HasSuffix(a.Name, want) && strings.HasPrefix(a.URL, releasePrefix) {
+			if strings.HasSuffix(a.Name, want) && strings.HasPrefix(a.URL, releasePrefix) && AllowedURL(a.URL) {
 				res.DownloadName, res.DownloadURL = a.Name, a.URL
 				break
 			}
 		}
 	}
+	for _, a := range rel.Assets {
+		if a.Name == "SHA256SUMS.txt" && strings.HasPrefix(a.URL, releasePrefix) && AllowedURL(a.URL) {
+			res.ChecksumsName, res.ChecksumsURL = a.Name, a.URL
+			break
+		}
+	}
 	return res, nil
 }
 
-// assetSuffix matches the file names built by .github/workflows/release.yml.
-func assetSuffix(goos, goarch string) string {
+// AssetSuffix matches the file names built by .github/workflows/release.yml.
+func AssetSuffix(goos, goarch string) string {
 	arch := map[string]string{"amd64": "x64", "arm64": "arm64"}[goarch]
 	if arch == "" {
 		return ""

@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import type { ReactNode } from 'react';
-import { ArrowDown, ArrowUp, Check, Download, Highlighter, Info, Loader2, RefreshCw, Keyboard, Palette, Pencil, Plus, RotateCcw, ShieldCheck, CloudUpload, SquareTerminal, Trash2, X } from 'lucide-react';
+import { ArrowDown, ArrowUp, Check, Highlighter, Info, Keyboard, Palette, Pencil, Plus, RotateCcw, ShieldCheck, CloudUpload, SquareTerminal, Trash2, X } from 'lucide-react';
 import { Modal } from '../ui/Dialogs';
 import { Select } from '../ui/Select';
 import { TerminalPreview } from './TerminalPreview';
@@ -11,9 +11,7 @@ import type { TerminalTheme } from '../../lib/themes';
 import { compileRule } from '../../lib/highlight';
 import { SecuritySection } from './SecuritySection';
 import { SyncSection } from './SyncSection';
-import { OpenURL } from '../../../wailsjs/go/main/App';
-import { checkForUpdate, useUpdates } from '../../lib/updates';
-import { parseReleaseNotes } from '../../lib/releaseNotes';
+import { useUpdates } from '../../lib/updates';
 
 export type SettingsSection = 'appearance' | 'terminal' | 'highlight' | 'security' | 'sync' | 'shortcuts' | 'about';
 
@@ -471,60 +469,14 @@ function ShortcutsSection({ modKey }: { modKey: string }) {
 
 // ── About / updates ───────────────────────────────────────────────────
 
-function AboutSection({ settings }: { settings: AppSettings }) {
+function AboutSection(_props: { settings: AppSettings }) {
   const u = useUpdates();
-  const r = u.result;
-  const notes = r?.notes ? parseReleaseNotes(r.notes) : [];
   return (
     <div className="space-y-6">
       <Section title="Terminyxx">
         <Row label="Version" hint="SSH terminal, SFTP file manager and RDP launcher.">
           <span className="font-mono text-[13px] text-gray-200">{u.version || '…'}</span>
         </Row>
-      </Section>
-
-      <Section
-        title="Updates"
-        action={
-          <button className="btn-secondary h-7 px-2.5 text-xs" onClick={() => void checkForUpdate()} disabled={u.checking}>
-            {u.checking ? <Loader2 size={12} className="animate-spin" /> : <RefreshCw size={12} />} Check for updates
-          </button>
-        }
-      >
-        <Row label="Check at startup" hint="Looks for a newer release on GitHub when the app starts. Nothing is downloaded or installed automatically.">
-          <Toggle checked={settings.updates.autoCheck} onChange={(v) => updateSettings((s) => ({ ...s, updates: { ...s.updates, autoCheck: v } }))} />
-        </Row>
-
-        {u.error && <p className="mt-3 text-xs text-red-400">Could not check for updates: {u.error}</p>}
-        {r && !u.error && !r.available && <p className="mt-3 text-xs text-emerald-400">You are up to date (version {r.current}).</p>}
-        {r && r.available && (
-          <div className="mt-3 rounded-lg border border-accent/30 bg-accent/10 p-3">
-            <div className="text-[13px] text-gray-100">Version {r.latest} is available</div>
-            {notes.length > 0 && (
-              <div className="mt-2 max-h-40 overflow-auto space-y-1 text-2xs text-gray-400">
-                {notes.map((l, i) =>
-                  l.kind === 'heading' ? (
-                    <div key={i} className="pt-1 font-semibold text-gray-300">{l.text}</div>
-                  ) : l.kind === 'bullet' ? (
-                    <div key={i} className="flex gap-1.5"><span>•</span><span>{l.text}</span></div>
-                  ) : (
-                    <div key={i}>{l.text}</div>
-                  ),
-                )}
-              </div>
-            )}
-            <div className="mt-3 flex gap-2">
-              {r.downloadUrl && (
-                <button className="btn-primary h-7 px-2.5 text-xs" onClick={() => void OpenURL(r.downloadUrl)}>
-                  <Download size={12} /> Download {r.downloadName}
-                </button>
-              )}
-              <button className="btn-secondary h-7 px-2.5 text-xs" onClick={() => void OpenURL(r.url)}>
-                Release page
-              </button>
-            </div>
-          </div>
-        )}
       </Section>
     </div>
   );

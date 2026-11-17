@@ -1,6 +1,5 @@
-import { ArrowUpCircle, Box, Copy, EyeOff, ScrollText, FolderTree, Lock, Plug, RotateCw, ShieldAlert, ShieldCheck, Unplug } from 'lucide-react';
+import { Box, Copy, EyeOff, ScrollText, FolderTree, Lock, Plug, RotateCw, ShieldAlert, ShieldCheck, Unplug } from 'lucide-react';
 import { showCaptureNotice, useCaptureProtection } from '../../lib/captureProtection';
-import { useUpdates } from '../../lib/updates';
 import type { TerminalTab } from '../../types';
 import { TunnelsPopover } from '../terminal/TunnelsPopover';
 import { RecordButton } from '../recordings/RecordButton';
@@ -15,7 +14,6 @@ interface StatusBarProps {
   onDisconnect: () => void;
   onReconnect: () => void;
   onOpenSecurity: () => void;
-  onOpenUpdates: () => void;
   /** Presentation mode: secrets in output are masked. */
   masking: boolean;
   onToggleMasking: () => void;
@@ -36,9 +34,8 @@ const LABEL: Record<TerminalTab['status'], string> = {
   disconnected: 'Disconnected',
 };
 
-export function StatusBar({ tab, size, sftpOpen, openTabs, onToggleSftp, onDisconnect, onReconnect, onOpenSecurity, onOpenUpdates, masking, onToggleMasking, lockConfigured, onLock, onOpenSnippets, onOpenRecordings, onOpenContainers, broadcast, onToggleBroadcast }: StatusBarProps) {
+export function StatusBar({ tab, size, sftpOpen, openTabs, onToggleSftp, onDisconnect, onReconnect, onOpenSecurity, masking, onToggleMasking, lockConfigured, onLock, onOpenSnippets, onOpenRecordings, onOpenContainers, broadcast, onToggleBroadcast }: StatusBarProps) {
   const protection = useCaptureProtection();
-  const update = useUpdates().result;
   const status = tab?.status;
   // SFTP-only and RDP panes have no terminal: hide the terminal-only items.
   const sftpOnly = !!tab?.profile?.sftpOnly || !!tab?.rdp;
@@ -111,11 +108,6 @@ export function StatusBar({ tab, size, sftpOpen, openTabs, onToggleSftp, onDisco
         </button>
       )}
 
-      {update?.available && (
-        <button className="flex items-center gap-1 h-5 px-2 rounded-md text-accent hover:bg-accent/10 transition-colors flex-shrink-0" onClick={onOpenUpdates} title={`Terminyxx ${update.latest} is available`}>
-          <ArrowUpCircle size={11} /> Update {update.latest}
-        </button>
-      )}
       <button
         className={`flex items-center gap-1 h-5 px-2 rounded-md transition-colors flex-shrink-0 ${
           masking ? 'bg-amber-400/15 text-amber-300 hover:bg-amber-400/25' : 'hover:bg-white/[0.06] hover:text-gray-300'

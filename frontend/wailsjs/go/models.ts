@@ -846,6 +846,8 @@ export namespace updater {
 	    notes: string;
 	    downloadUrl: string;
 	    downloadName: string;
+	    checksumsUrl: string;
+	    checksumsName: string;
 	
 	    static createFrom(source: any = {}) {
 	        return new Result(source);
@@ -860,6 +862,8 @@ export namespace updater {
 	        this.notes = source["notes"];
 	        this.downloadUrl = source["downloadUrl"];
 	        this.downloadName = source["downloadName"];
+	        this.checksumsUrl = source["checksumsUrl"];
+	        this.checksumsName = source["checksumsName"];
 	    }
 	}
 

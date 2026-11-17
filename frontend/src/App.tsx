@@ -33,7 +33,7 @@ import { openRdpSession } from './lib/rdpConnect';
 import { SettingsDialog } from './components/settings/SettingsDialog';
 import type { SettingsSection } from './components/settings/SettingsDialog';
 import { useDialogs, errorText, modalSwap } from './components/ui/Dialogs';
-import { checkForUpdate, loadVersion } from './lib/updates';
+import { loadVersion } from './lib/updates';
 import { useHotkeys } from './hooks/useHotkeys';
 import { ConnectCancelled, connectWithPrompts } from './lib/connect';
 import { LockScreen } from './components/security/LockScreen';
@@ -44,7 +44,7 @@ import { modKey, usePlatform } from './lib/hosts';
 import type { QuickTarget } from './lib/hosts';
 import type { RDPProfile, SSHProfile, StreamSpec, TerminalTab } from './types';
 import { EventsOn } from '../wailsjs/runtime/runtime';
-import { LaunchRDP, RDPClose, SaveRDPProfile, SaveSSHProfile, SSHDisconnect } from '../wailsjs/go/main/App';
+import { LaunchRDP, OpenURL, RDPClose, SaveRDPProfile, SaveSSHProfile, SSHDisconnect } from '../wailsjs/go/main/App';
 
 type ConnectDialogState = { key: number; tabId: string | null; initial?: Partial<SSHProfile> } | null;
 
@@ -112,18 +112,28 @@ function App() {
     return () => setClipboardNotifier(null);
   }, [dialogs]);
 
-  // Startup update check: quiet unless a newer release exists.
   useEffect(() => {
     loadVersion();
-    if (!getSettings().updates.autoCheck) return;
-    const t = window.setTimeout(() => {
-      void checkForUpdate().then((u) => {
-        if (u.result?.available) dialogs.toast(`Terminyxx ${u.result.latest} is available. See Settings → About.`, 'info');
-      });
-    }, 3000);
-    return () => window.clearTimeout(t);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+    const offReady = EventsOn('updater:ready', (payload?: { version?: string }) => {
+      const v = (payload?.version ?? '').replace(/^v/, '');
+      if (v) dialogs.toast(`Updated to v${v} — applies on restart`, 'success');
+    });
+    const offManual = EventsOn('updater:manual', (payload?: { version?: string; url?: string }) => {
+      const v = (payload?.version ?? '').replace(/^v/, '');
+      const url = payload?.url ?? '';
+      dialogs.toast(
+        `Terminyxx v${v || 'a new version'} is available, but this copy can't be updated automatically. Click to open the download.`,
+        'info',
+        () => {
+          if (url) void OpenURL(url);
+        },
+      );
+    });
+    return () => {
+      offReady();
+      offManual();
+    };
+  }, [dialogs]);
 
   const lockApp = async () => {
     if (await lockNow()) return;
@@ -780,7 +790,6 @@ function App() {
         onDisconnect={() => activeTab && handleDisconnect(activeTab.id)}
         onReconnect={() => activeTab && handleReconnect(activeTab)}
         onOpenSecurity={() => setSettingsOpen('security')}
-        onOpenUpdates={() => setSettingsOpen('about')}
         masking={masking}
         onToggleMasking={toggleMasking}
         lockConfigured={lock.configured}

@@ -78,6 +78,7 @@ func (a *App) startup(ctx context.Context) {
 	a.stop = make(chan struct{})
 	a.initSecurity()
 	go a.watchScreenSharing()
+	a.startAutoUpdate()
 }
 
 // watchScreenSharing polls for screen sharing and emits "capture:sharing"
@@ -108,6 +109,7 @@ func (a *App) shutdown(ctx context.Context) {
 	if a.stop != nil {
 		close(a.stop)
 	}
+	applyPendingUpdate(false)
 	// Don't leave a copied secret on the clipboard after the app is gone.
 	if a.sec.clip != nil {
 		a.sec.clip.ClearNow()
