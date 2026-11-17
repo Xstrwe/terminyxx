@@ -131,9 +131,21 @@ func (a *App) SSHConnect(req connection.ConnectRequest) error {
 	}
 	// Saved hosts keep their password in the OS keychain; the frontend never
 	// receives it, so resolve it here.
+	// The saved password is only ever sent to the saved address: host, port,
+	// user and auth settings come from the stored profile, not from the
+	// request, so a tampered request cannot redirect the credential.
 	if req.Password == "" && req.ProfileID != "" && a.data != nil {
-		if pw, err := a.data.SSHPassword(req.ProfileID); err == nil {
-			req.Password = pw
+		if p, err := a.data.GetSSHProfile(req.ProfileID); err == nil {
+			if pw, err := a.data.SSHPassword(p.ID); err == nil && pw != "" {
+				req.Password = pw
+				req.Host = p.Host
+				req.Port = p.Port
+				req.Username = p.Username
+				req.AuthType = p.AuthType
+				req.KeyPath = p.KeyPath
+				req.AllowLegacyAlgorithms = p.AllowLegacyAlgorithms
+				req.AgentForwarding = p.AgentForwarding
+			}
 		}
 	}
 	if req.JumpFor != "" && a.data != nil && len(req.Jump) == 0 {
