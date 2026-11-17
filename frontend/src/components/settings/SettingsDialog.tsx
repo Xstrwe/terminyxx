@@ -11,7 +11,7 @@ import type { TerminalTheme } from '../../lib/themes';
 import { compileRule } from '../../lib/highlight';
 import { SecuritySection } from './SecuritySection';
 import { SyncSection } from './SyncSection';
-import { BrowserOpenURL } from '../../../wailsjs/runtime/runtime';
+import { OpenURL } from '../../../wailsjs/go/main/App';
 import { checkForUpdate, useUpdates } from '../../lib/updates';
 import { parseReleaseNotes } from '../../lib/releaseNotes';
 
@@ -515,11 +515,11 @@ function AboutSection({ settings }: { settings: AppSettings }) {
             )}
             <div className="mt-3 flex gap-2">
               {r.downloadUrl && (
-                <button className="btn-primary h-7 px-2.5 text-xs" onClick={() => BrowserOpenURL(r.downloadUrl)}>
+                <button className="btn-primary h-7 px-2.5 text-xs" onClick={() => void OpenURL(r.downloadUrl)}>
                   <Download size={12} /> Download {r.downloadName}
                 </button>
               )}
-              <button className="btn-secondary h-7 px-2.5 text-xs" onClick={() => BrowserOpenURL(r.url)}>
+              <button className="btn-secondary h-7 px-2.5 text-xs" onClick={() => void OpenURL(r.url)}>
                 Release page
               </button>
             </div>

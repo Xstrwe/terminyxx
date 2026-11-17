@@ -146,6 +146,10 @@ export function OpenRecordingsFolder() {
   return window['go']['main']['App']['OpenRecordingsFolder']();
 }
 
+export function OpenURL(arg1) {
+  return window['go']['main']['App']['OpenURL'](arg1);
+}
+
 export function PickImportPaths(arg1) {
   return window['go']['main']['App']['PickImportPaths'](arg1);
 }

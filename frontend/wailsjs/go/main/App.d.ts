@@ -82,6 +82,8 @@ export function MoveItem(arg1:string,arg2:string,arg3:string,arg4:number):Promis
 
 export function OpenRecordingsFolder():Promise<void>;
 
+export function OpenURL(arg1:string):Promise<void>;
+
 export function PickImportPaths(arg1:string):Promise<Array<string>>;
 
 export function RDPClose(arg1:string):Promise<void>;

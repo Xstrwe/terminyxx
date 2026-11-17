@@ -38,6 +38,9 @@ const dragPlanTTL = 5 * time.Minute
 // SFTPPrepareDragOut starts listing the selection for a drag out and returns
 // a token for SFTPStartDragOut / SFTPCancelDragOut.
 func (a *App) SFTPPrepareDragOut(id string, sources []string) (string, error) {
+	if err := a.requireUnlocked(); err != nil {
+		return "", err
+	}
 	if a.sec.lock != nil && a.sec.lock.Locked() {
 		return "", connection.ErrLocked
 	}

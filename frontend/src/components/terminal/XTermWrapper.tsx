@@ -6,10 +6,10 @@ import '@xterm/xterm/css/xterm.css';
 import { ClipboardPaste, Copy, Eraser, TextSelect } from 'lucide-react';
 import { useContextMenu } from '../ui/ContextMenu';
 import type { MenuEntry } from '../ui/ContextMenu';
-import { BrowserOpenURL, EventsOn } from '../../../wailsjs/runtime/runtime';
+import { EventsOn } from '../../../wailsjs/runtime/runtime';
 import { inputTargets } from '../../lib/broadcast';
 import { takeInitialInput } from '../../lib/initialInput';
-import { SSHResizePTY, SSHStartShell, SSHWriteInput } from '../../../wailsjs/go/main/App';
+import { OpenURL, SSHResizePTY, SSHStartShell, SSHWriteInput } from '../../../wailsjs/go/main/App';
 import { fontStack, getSettings, subscribeSettings } from '../../lib/settings';
 import type { AppSettings } from '../../lib/settings';
 import { themeById } from '../../lib/themes';
@@ -67,14 +67,16 @@ export function XTermWrapper({ connectionId, visible, focused, connected, menuEx
           if (!/^https?:\/\//i.test(uri)) return;
           void dialogs
             .confirm({ title: 'Open link?', confirmLabel: 'Open in browser', message: <code className="block text-xs break-all text-accent">{uri}</code> })
-            .then((ok) => ok && BrowserOpenURL(uri));
+            .then((ok) => {
+              if (ok) void OpenURL(uri).catch(() => {});
+            });
         },
       },
     });
     container.style.background = themeById(getSettings().appearance.themeId).colors.background;
     const fit = new FitAddon();
     term.loadAddon(fit);
-    term.loadAddon(new WebLinksAddon((_e, uri) => BrowserOpenURL(uri)));
+    term.loadAddon(new WebLinksAddon((_e, uri) => void OpenURL(uri).catch(() => {})));
     term.open(container);
     termRef.current = term;
     fitRef.current = fit;
